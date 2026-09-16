@@ -1,0 +1,62 @@
+{
+  "reference_canvas": {
+    "width": 1672,
+    "height": 941
+  },
+  "confirmed_scene_assets": [
+    "assets/scene/layer-00-distant.png",
+    "assets/scene/layer-10-ground.png",
+    "assets/scene/layer-20-tree.png",
+    "assets/scene/layer-40-foreground.png"
+  ],
+  "staging_scene_assets": [],
+  "objects": [
+    "assets/objects/sign.png",
+    "assets/objects/jukebox.png"
+  ],
+  "placement": {
+    "layer-10-ground.png": {
+      "canvas": [
+        1672,
+        941
+      ],
+      "source_size": [
+        1774,
+        887
+      ],
+      "method": "uniform-scale-to-width",
+      "rendered_size": [
+        1672,
+        836
+      ],
+      "offset": [
+        0,
+        105
+      ],
+      "alignment": "bottom-center",
+      "aspect_ratio_preserved": true
+    },
+    "layer-20-tree.png": {
+      "canvas": [
+        1672,
+        941
+      ],
+      "source_size": [
+        1536,
+        1024
+      ],
+      "method": "uniform-fit-inside-canvas",
+      "rendered_size": [
+        1412,
+        941
+      ],
+      "offset": [
+        130,
+        0
+      ],
+      "alignment": "bottom-center",
+      "aspect_ratio_preserved": true,
+      "cropped": false
+    }
+  }
+}

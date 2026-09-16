@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>つながりの木</title>
+<style>
+:root{
+  --ink:#fffdf6; --muted:rgba(255,253,246,.72);
+  --glass:rgba(20,26,24,.36); --line:rgba(255,233,172,.52);
+  --gold:#ffe7a6;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#14201e;color:var(--ink);font-family:"Yu Mincho","Hiragino Mincho ProN","Noto Serif JP",serif}
+button,input{font:inherit}
+#app{position:relative;width:100%;height:100%;isolation:isolate;background:#15221f}
+#bg{display:none}
+#scene{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.scene-layer{position:absolute;inset:-2%;background-repeat:no-repeat;will-change:transform;transform:translate3d(0,0,0)}
+.scene-layer.distant{inset:0;background:url("assets/layer-00-distant.png") center/cover no-repeat;z-index:0}
+.scene-layer.ground{inset:0;background:url("assets/layer-10-ground.png") center bottom/cover no-repeat;z-index:2}
+.scene-layer.tree{inset:0;background:url("assets/layer-20-tree.png") center 52%/contain no-repeat;z-index:3}
+.scene-layer.foreground{inset:-1.5%;background:url("assets/layer-40-foreground.png") center/cover no-repeat;z-index:7}
+#fx{z-index:8!important}
+#memberLayer{z-index:6!important;will-change:transform}
+#bg{position:absolute;inset:0;background:url("./assets/tree-bg.png") center center/cover no-repeat;transform:scale(1.002);will-change:transform;z-index:0}
+#shade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,rgba(4,8,7,.02),rgba(4,8,7,.06))}
+#fx,#network{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
+#network{z-index:3}
+#nodes{position:absolute;inset:0;z-index:4}
+.node{
+  position:absolute;left:calc(var(--x)*1%);top:calc(var(--y)*1%);
+  width:72px;height:72px;border:0;padding:0;border-radius:50%;cursor:pointer;
+  transform:translate(-50%,-50%);background:rgba(255,248,225,.92);
+  box-shadow:0 0 0 2px rgba(255,250,226,.9),0 0 22px 7px rgba(255,220,125,.42),0 10px 30px rgba(0,0,0,.25);
+  transition:filter .25s ease,box-shadow .25s ease;
+}
+.node::after{content:"";position:absolute;inset:-8px;border:1px solid rgba(255,232,164,.38);border-radius:50%}
+.node img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
+.node .fallback{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;color:#493c2b;font:bold 24px system-ui;background:linear-gradient(145deg,#fff8dd,#e9c98b)}
+.node .label{
+  position:absolute;left:50%;top:calc(100% + 10px);transform:translateX(-50%);
+  white-space:nowrap;padding:5px 9px;border-radius:999px;background:rgba(13,20,18,.56);
+  border:1px solid rgba(255,255,255,.14);color:#fff;font:600 12px/1 system-ui;
+  opacity:0;transition:opacity .2s ease;pointer-events:none;backdrop-filter:blur(8px)
+}
+.node:hover .label,.node:focus-visible .label,.node.active .label{opacity:1}
+.node.dim{filter:brightness(.55) saturate(.7);box-shadow:0 0 0 1px rgba(255,255,255,.35)}
+.node.active{box-shadow:0 0 0 3px white,0 0 34px 12px rgba(255,218,112,.66),0 12px 35px rgba(0,0,0,.28)}
+header{position:absolute;z-index:8;left:34px;top:26px;text-shadow:0 2px 20px rgba(0,0,0,.5);pointer-events:none}
+header h1{margin:0;font-weight:500;letter-spacing:.08em;font-size:clamp(28px,3vw,54px)}
+header p{margin:7px 0 0;font-size:13px;letter-spacing:.18em;color:var(--muted)}
+#toolbar{position:absolute;z-index:9;right:24px;top:22px;display:flex;gap:9px;align-items:center}
+.glass{background:var(--glass);border:1px solid rgba(255,255,255,.16);box-shadow:inset 0 1px rgba(255,255,255,.08);backdrop-filter:blur(15px);-webkit-backdrop-filter:blur(15px)}
+#search{width:min(260px,34vw);height:42px;border-radius:22px;padding:0 16px;color:#fff;outline:none}
+#search::placeholder{color:rgba(255,255,255,.58)}
+.pill{height:42px;border-radius:22px;padding:0 15px;color:#fff;display:grid;place-items:center;font:600 13px system-ui}
+#hint{position:absolute;z-index:8;left:50%;bottom:22px;transform:translateX(-50%);padding:9px 14px;border-radius:18px;font:12px system-ui;color:rgba(255,255,255,.78);white-space:nowrap}
+#panel{
+  position:absolute;z-index:10;right:22px;top:82px;width:min(360px,calc(100% - 44px));
+  padding:18px;border-radius:24px;transform:translateX(calc(100% + 40px));opacity:0;
+  transition:transform .38s cubic-bezier(.2,.8,.2,1),opacity .25s ease;
+}
+#panel.open{transform:none;opacity:1}
+#panel .hero{display:flex;gap:14px;align-items:center}
+#panel .avatar{width:68px;height:68px;border-radius:50%;object-fit:cover;background:#f6e3b5}
+#panel h2{margin:0 0 4px;font:600 23px system-ui}
+#panel .meta{color:var(--muted);font:12px system-ui}
+#panel p{font:14px/1.8 system-ui;color:rgba(255,255,255,.86)}
+#panel .links{display:flex;gap:8px;flex-wrap:wrap}
+#panel a,#close{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);color:white;text-decoration:none;border-radius:14px;padding:9px 11px;font:12px system-ui}
+#close{position:absolute;right:12px;top:12px;cursor:pointer}
+#emptyAvatar{display:none}
+@media(max-width:700px){
+  header{left:18px;top:18px} header p{display:none}
+  #toolbar{right:14px;top:14px}.pill{display:none}#search{width:150px}
+  .node{width:58px;height:58px}
+  #panel{right:12px;left:12px;top:auto;bottom:12px;width:auto;transform:translateY(calc(100% + 30px))}
+  #panel.open{transform:none}
+  #hint{bottom:12px}
+}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+#memberLayer{position:absolute;inset:0;z-index:5;pointer-events:none}
+.member-ui{
+  position:absolute;width:76px;height:76px;padding:0;border:2px solid rgba(255,255,255,.92);
+  border-radius:50%;overflow:visible;background:rgba(255,255,255,.2);cursor:grab;pointer-events:auto;
+  transform:translate(-50%,-50%);box-shadow:0 0 0 5px rgba(255,226,145,.16),0 0 25px rgba(255,210,100,.58),0 10px 28px rgba(0,0,0,.25);
+  animation:memberFloat var(--floatDur,5.6s) ease-in-out var(--floatDelay,0s) infinite;
+  user-select:none;touch-action:none;
+}
+.member-ui:active{cursor:grabbing}
+.member-ui img{display:block;width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none}
+.member-ui::before{
+  content:"";position:absolute;inset:-9px;border-radius:50%;
+  border:1px solid rgba(255,235,178,.35);box-shadow:0 0 18px rgba(255,219,120,.22);pointer-events:none
+}
+.member-ui::after{
+  content:attr(data-label);position:absolute;left:50%;top:calc(100% + 10px);transform:translateX(-50%);
+  padding:7px 10px;border-radius:12px;white-space:pre;color:#fff;background:rgba(13,20,18,.66);
+  border:1px solid rgba(255,255,255,.16);font:600 11px/1.45 system-ui;opacity:0;transition:.2s;backdrop-filter:blur(10px);text-align:center
+}
+.member-ui:hover::after{opacity:1}
+.ui{position:absolute;z-index:9;border:1px solid rgba(255,255,255,.2);color:#fff;cursor:pointer}
+#addMember{right:28px;top:26px;height:48px;padding:0 18px;border-radius:24px;
+background:rgba(24,31,27,.78);border:1px solid rgba(255,242,198,.46);
+box-shadow:0 10px 30px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.14);
+font:700 13px system-ui;display:flex;align-items:center;gap:7px;backdrop-filter:blur(14px)}
+#addMember:hover{background:rgba(31,40,35,.9);transform:translateY(-1px)}
+#addMember .plus{font-size:18px;line-height:1;color:#ffe391}
+@keyframes memberFloat{
+  0%,100%{margin-top:-4px}
+  50%{margin-top:6px}
+}
+@media(max-width:700px){
+  .member-ui{width:60px;height:60px}
+  #addMember{right:14px;top:14px}
+}
+
+
+#editorBackdrop[hidden]{display:none}
+#editorBackdrop{position:absolute;inset:0;z-index:20;display:grid;place-items:center;padding:20px;background:rgba(5,10,9,.34);backdrop-filter:blur(8px)}
+#memberForm{position:relative;width:min(430px,100%);padding:26px;border-radius:26px;background:rgba(20,27,24,.68);border:1px solid rgba(255,255,255,.2);box-shadow:0 28px 80px rgba(0,0,0,.35);font-family:system-ui,sans-serif}
+#memberForm h2{margin:3px 0 22px;font-size:24px}
+.form-kicker{font-size:10px;letter-spacing:.22em;color:rgba(255,239,196,.72)}
+#memberForm label{display:block;margin:14px 0}
+#memberForm label span{display:block;margin:0 0 7px;font-size:12px;color:rgba(255,255,255,.74)}
+#memberForm input[type="text"],#memberForm input[type="file"]{width:100%;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:rgba(255,255,255,.08);color:#fff;padding:12px 13px;outline:none}
+#memberForm input::placeholder{color:rgba(255,255,255,.36)}
+#iconPreview{width:82px;height:82px;margin:16px auto;border-radius:50%;display:grid;place-items:center;overflow:hidden;border:2px solid rgba(255,255,255,.7);background:rgba(255,255,255,.08);font-size:10px;letter-spacing:.12em;color:rgba(255,255,255,.5)}
+#iconPreview img{width:100%;height:100%;object-fit:cover}
+#formSubmit{width:100%;height:46px;border:0;border-radius:15px;background:#fff4d1;color:#46381f;font-weight:800;cursor:pointer}
+.form-note{margin:12px 0 0;text-align:center;font-size:11px;color:rgba(255,255,255,.54)}
+#formClose{position:absolute;right:15px;top:15px;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff;cursor:pointer}
+
+
+.choice-group{border:0;padding:0;margin:16px 0}
+.choice-group legend{margin-bottom:8px;font-size:12px;color:rgba(255,255,255,.74)}
+.segmented{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.frame-options{grid-template-columns:repeat(4,1fr)}
+.segmented label{margin:0!important}
+.segmented input{position:absolute;opacity:0;pointer-events:none}
+.segmented label>span{height:44px;display:flex;align-items:center;justify-content:center;gap:7px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:rgba(255,255,255,.055);font-size:12px;color:rgba(255,255,255,.72);cursor:pointer;transition:.18s}
+.segmented input:checked+span{background:rgba(255,244,209,.16);border-color:rgba(255,238,184,.62);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,238,184,.16)}
+.shape-demo{width:17px;height:17px;display:block;border:1.5px solid currentColor;background:rgba(255,255,255,.12)}
+.shape-demo.circle{border-radius:50%}.shape-demo.square{border-radius:0}.shape-demo.rounded{border-radius:5px}
+#iconPreview.shape-circle,.member-ui.shape-circle,.member-ui.shape-circle img{border-radius:50%}
+#iconPreview.shape-square,.member-ui.shape-square,.member-ui.shape-square img{border-radius:0}
+#iconPreview.shape-rounded,.member-ui.shape-rounded,.member-ui.shape-rounded img{border-radius:18%}
+.member-ui.frame-none,#iconPreview.frame-none{border-color:transparent;box-shadow:0 10px 28px rgba(0,0,0,.22)}
+.member-ui.frame-white,#iconPreview.frame-white{border-color:rgba(255,255,255,.94)}
+.member-ui.frame-gold,#iconPreview.frame-gold{border-color:#f5d27b;box-shadow:0 0 0 5px rgba(245,210,123,.14),0 0 25px rgba(255,199,73,.55),0 10px 28px rgba(0,0,0,.25)}
+.member-ui.frame-dark,#iconPreview.frame-dark{border-color:rgba(39,43,37,.94);box-shadow:0 0 0 2px rgba(255,255,255,.18),0 10px 28px rgba(0,0,0,.28)}
+
+
+#memberForm textarea{width:100%;min-height:82px;resize:vertical;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:rgba(255,255,255,.08);color:#fff;padding:12px 13px;outline:none;font:13px/1.6 system-ui}
+#memberForm textarea::placeholder{color:rgba(255,255,255,.36)}
+#memberForm label small{font-size:10px;font-weight:400;color:rgba(255,255,255,.4);margin-left:4px}
+#profileCard[hidden]{display:none}
+#profileCard{
+  position:absolute;z-index:18;width:min(330px,calc(100vw - 28px));padding:18px;border-radius:22px;
+  background:rgba(20,27,24,.78);border:1px solid rgba(255,240,194,.28);
+  box-shadow:0 22px 65px rgba(0,0,0,.35),inset 0 1px rgba(255,255,255,.12);
+  backdrop-filter:blur(18px);font-family:system-ui,sans-serif;transform-origin:center bottom;
+  animation:cardIn .2s ease-out
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
+.card-head{display:flex;align-items:center;gap:12px;padding-right:30px}
+#cardAvatar{width:58px;height:58px;object-fit:cover;border-radius:50%;border:2px solid rgba(255,255,255,.88)}
+#cardName{font-size:17px;font-weight:800;color:#fff}
+#cardPublication{margin-top:3px;font-size:11px;color:rgba(255,236,180,.76)}
+#cardMemo{margin:14px 0;color:rgba(255,255,255,.78);font-size:12px;line-height:1.7;white-space:pre-wrap}
+#cardMemo:empty{display:none}
+#cardLink{display:block;padding:11px 13px;border-radius:13px;text-align:center;text-decoration:none;background:rgba(255,244,209,.12);border:1px solid rgba(255,235,177,.22);color:#fff;font-size:12px;font-weight:700}
+#cardLink:hover{background:rgba(255,244,209,.2)}
+#cardClose{position:absolute;right:11px;top:11px;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:#fff;cursor:pointer}
+@media(max-width:700px){
+  #profileCard{position:fixed!important;left:14px!important;right:14px!important;bottom:14px!important;top:auto!important;width:auto}
+}
+
+
+#sceneSign{position:absolute;left:2.2%;bottom:3.2%;width:min(25vw,390px);height:auto;z-index:9;pointer-events:none;
+filter:drop-shadow(0 12px 20px rgba(0,0,0,.24));will-change:transform}
+@media(max-width:800px){#sceneSign{width:min(42vw,300px);left:1%;bottom:5%}}
+
+
+/* v1.3 rebuilt scene stack */
+#scene{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.scene-layer{position:absolute;inset:0;background-repeat:no-repeat;pointer-events:none;will-change:transform}
+.scene-layer.distant{background-image:url("assets/layer-00-distant.png");background-position:center;background-size:cover;z-index:0}
+.scene-layer.ground{background-image:url("assets/layer-10-ground.png");background-position:center bottom;background-size:cover;z-index:2}
+.scene-layer.tree{background-image:url("assets/layer-20-tree.png");background-position:center 52%;background-size:contain;z-index:3}
+#shade{z-index:4}
+#memberLayer{z-index:6!important}
+#foregroundLayer{inset:-1.5%;background-image:url("assets/layer-40-foreground.png");background-position:center;background-size:cover;z-index:7}
+#fx{z-index:8!important}
+#sceneSign{z-index:9}
+#jukeboxButton{
+  position:absolute;right:2.2%;bottom:3%;z-index:10;width:clamp(82px,10vw,150px);padding:0;border:0;
+  background:transparent;cursor:pointer;filter:drop-shadow(0 12px 18px rgba(0,0,0,.3));
+  transition:transform .18s ease,filter .18s ease;will-change:transform
+}
+#jukeboxButton:hover{filter:drop-shadow(0 14px 24px rgba(255,190,74,.35))}
+#jukeboxButton:active{transform:scale(.96)}
+#jukeboxButton img{display:block;width:100%;height:auto;pointer-events:none}
+#musicState{
+  position:absolute;right:2%;top:4%;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
+  background:rgba(27,32,25,.76);border:1px solid rgba(255,224,151,.5);color:#ffe09a;font:700 16px system-ui;
+  box-shadow:0 5px 15px rgba(0,0,0,.25)
+}
+#jukeboxButton.playing #musicState{animation:musicPulse 1.15s ease-in-out infinite}
+@keyframes musicPulse{50%{transform:scale(1.15);box-shadow:0 0 24px rgba(255,202,91,.7)}}
+#musicToast{
+  position:absolute;right:2%;bottom:calc(3% + 160px);z-index:30;max-width:280px;padding:10px 12px;border-radius:12px;
+  background:rgba(18,24,20,.88);border:1px solid rgba(255,235,183,.25);color:#fff;font:12px/1.5 system-ui;
+  backdrop-filter:blur(12px)
+}
+@media(max-width:800px){
+  #jukeboxButton{width:90px;right:3%;bottom:9%}
+  #musicToast{right:3%;bottom:calc(9% + 100px)}
+}
+
+
+/* v1.4 — unified 16:9 virtual stage.
+   All visual assets share one coordinate system; no per-layer cover/contain scaling. */
+#scene{
+  position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:0;
+}
+#world{
+  position:absolute; left:50%; top:50%;
+  width:100vw; height:56.25vw;
+  min-width:177.7777778vh; min-height:100vh;
+  transform:translate(-50%,-50%);
+  transform-origin:center center;
+  pointer-events:none;
+}
+.world-layer{
+  position:absolute; pointer-events:none; will-change:transform;
+  transform:translate3d(0,0,0);
+}
+#distantLayer{inset:0;width:100%;height:100%;object-fit:fill;z-index:0}
+#groundLayer{inset:0;width:100%;height:100%;object-fit:fill;z-index:2}
+#treeLayer{
+  left:50%; bottom:-1.5%; width:78%; height:auto;
+  transform:translateX(-50%); transform-origin:50% 100%; z-index:3;
+}
+#worldMemberLayer{position:absolute;inset:0;z-index:6;pointer-events:none;will-change:transform}
+#foregroundLayer{
+  inset:0;width:100%;height:100%;object-fit:fill;z-index:7;
+}
+#sceneSign{
+  position:absolute;left:2.2%;bottom:3.2%;width:23%;height:auto;z-index:9;pointer-events:none;
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,.28));will-change:transform
+}
+#jukeboxButton{
+  right:3.2%;bottom:3.4%;width:8.5%;min-width:82px;max-width:145px;z-index:10
+}
+@media(max-width:800px){
+  #treeLayer{width:92%;bottom:0}
+  #sceneSign{width:34%;left:1.5%;bottom:5%}
+  #jukeboxButton{width:11%;right:3%;bottom:8%}
+}
+
+/* v1.5 — parallax overscan: moving layers remain larger than the visible stage */
+#distantLayer,
+#groundLayer,
+#foregroundLayer{
+  left:-1.5%;
+  top:-2.7%;
+  width:103%;
+  height:105.4%;
+}
+
+</style>
+</head>
+<body>
+<main id="app">
+  <div id="scene" aria-hidden="true">
+    <div id="world">
+      <img id="distantLayer" class="world-layer" src="assets/layer-00-distant.png" alt="">
+      <img id="groundLayer" class="world-layer" src="assets/layer-10-ground.png" alt="">
+      <img id="treeLayer" class="world-layer" src="assets/layer-20-tree.png" alt="">
+      <div id="worldMemberLayer"></div>
+      <img id="foregroundLayer" class="world-layer" src="assets/layer-40-foreground.png" alt="">
+      <img id="sceneSign" src="assets/layer-50-sign.png" alt="つながりの木">
+      <button id="jukeboxButton" type="button" aria-label="BGMを再生・停止" title="BGM">
+        <img src="assets/layer-60-jukebox.png" alt="">
+        <span id="musicState">♪</span>
+      </button>
+    </div>
+  </div>
+  <div id="shade" aria-hidden="true"></div>
+
+  <div id="memberLayer" aria-label="メンバー"></div>
+  <audio id="bgm" preload="none" loop>
+    <source src="assets/bgm.mp3" type="audio/mpeg">
+  </audio>
+
+  <canvas id="fx" aria-hidden="true"></canvas>
+  <div id="musicToast" hidden>BGMファイルを assets/bgm.mp3 に入れると再生できます。</div>
+
+  <button id="addMember" class="ui glass" type="button">
+    <span class="plus">＋</span><span>メンバー追加</span>
+  </button>
+
+  <div id="editorBackdrop" hidden>
+    <form id="memberForm" class="glass">
+      <button id="formClose" type="button" aria-label="閉じる">×</button>
+      <div class="form-kicker">MEMBER</div>
+      <h2>メンバーを追加</h2>
+
+      <label>
+        <span>名前</span>
+        <input id="memberName" type="text" placeholder="例：もちもち" maxlength="40" required>
+      </label>
+
+      <label>
+        <span>パブリケーション</span>
+        <input id="publicationName" type="text" placeholder="例：もちもち通信" maxlength="80" required>
+      </label>
+
+      <label>
+        <span>アイコン</span>
+        <input id="memberFile" type="file" accept="image/*" required>
+      </label>
+
+      <label>
+        <span>Substackパブリケーション <small>任意</small></span>
+        <input id="memberLink" type="url" placeholder="https://xxxxx.substack.com/" inputmode="url">
+      </label>
+
+      <label>
+        <span>メモ <small>任意</small></span>
+        <textarea id="memberMemo" placeholder="出会ったきっかけ、紹介文など" maxlength="240"></textarea>
+      </label>
+
+      <fieldset class="choice-group">
+        <legend>アイコン形状</legend>
+        <div class="segmented">
+          <label><input type="radio" name="iconShape" value="circle" checked><span><i class="shape-demo circle"></i>丸</span></label>
+          <label><input type="radio" name="iconShape" value="square"><span><i class="shape-demo square"></i>四角</span></label>
+          <label><input type="radio" name="iconShape" value="rounded"><span><i class="shape-demo rounded"></i>角丸</span></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="choice-group">
+        <legend>枠</legend>
+        <div class="segmented frame-options">
+          <label><input type="radio" name="iconFrame" value="none"><span>なし</span></label>
+          <label><input type="radio" name="iconFrame" value="white" checked><span>白</span></label>
+          <label><input type="radio" name="iconFrame" value="gold"><span>ゴールド</span></label>
+          <label><input type="radio" name="iconFrame" value="dark"><span>濃色</span></label>
+        </div>
+      </fieldset>
+
+      <div id="iconPreview" class="shape-circle frame-white"><span>ICON</span></div>
+      <button id="formSubmit" type="submit">木に追加する</button>
+      <p class="form-note">追加後、アイコンをドラッグして好きな位置へ移動できます。</p>
+    </form>
+  </div>
+
+  <div id="profileCard" class="glass" hidden>
+    <button id="cardClose" type="button" aria-label="閉じる">×</button>
+    <div class="card-head">
+      <img id="cardAvatar" alt="">
+      <div>
+        <div id="cardName"></div>
+        <div id="cardPublication"></div>
+      </div>
+    </div>
+    <p id="cardMemo"></p>
+    <a id="cardLink" href="#" target="_blank" rel="noopener">Substackを読む ↗</a>
+  </div>
+
+</main>
+
+<script>
+const app=document.querySelector("#app");
+
+const fx=document.querySelector("#fx"),ctx=fx.getContext("2d");
+let motes=[],fxW=0,fxH=0,fxDpr=1;
+function resetParticles(){
+  fxW=app.clientWidth; fxH=app.clientHeight;
+  fxDpr=Math.min(window.devicePixelRatio||1,2);
+  fx.width=Math.max(1,Math.floor(fxW*fxDpr));
+  fx.height=Math.max(1,Math.floor(fxH*fxDpr));
+  fx.style.width=fxW+"px"; fx.style.height=fxH+"px";
+  ctx.setTransform(fxDpr,0,0,fxDpr,0,0);
+  const count=Math.max(42,Math.min(110,Math.floor((fxW*fxH)/18000)));
+  motes=Array.from({length:count},()=>({
+    x:Math.random()*fxW,y:Math.random()*fxH,
+    r:.55+Math.random()*1.7,alpha:.12+Math.random()*.5,
+    speed:.035+Math.random()*.12,drift:(Math.random()-.5)*.045,
+    phase:Math.random()*Math.PI*2,twinkle:.00045+Math.random()*.0011
+  }));
+}
+function renderParticles(t){
+  ctx.clearRect(0,0,fxW,fxH);
+  const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  for(const m of motes){
+    if(!reduced){
+      m.y-=m.speed;
+      m.x+=m.drift+Math.sin(t*.00025+m.phase)*.015;
+      if(m.y<-8){m.y=fxH+8;m.x=Math.random()*fxW}
+      if(m.x<-8)m.x=fxW+8;
+      if(m.x>fxW+8)m.x=-8;
+    }
+    const pulse=.58+.42*Math.sin(t*m.twinkle+m.phase);
+    const a=Math.max(.04,m.alpha*pulse);
+    const glow=ctx.createRadialGradient(m.x,m.y,0,m.x,m.y,m.r*5);
+    glow.addColorStop(0,`rgba(255,244,194,${a})`);
+    glow.addColorStop(.22,`rgba(255,220,125,${a*.7})`);
+    glow.addColorStop(1,"rgba(255,205,90,0)");
+    ctx.fillStyle=glow;ctx.beginPath();ctx.arc(m.x,m.y,m.r*5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=`rgba(255,248,218,${Math.min(.9,a*1.25)})`;
+    ctx.beginPath();ctx.arc(m.x,m.y,m.r,0,Math.PI*2);ctx.fill();
+  }
+  requestAnimationFrame(renderParticles);
+}
+addEventListener("resize",resetParticles);
+resetParticles();
+requestAnimationFrame(renderParticles);
+
+const memberLayer=document.querySelector("#worldMemberLayer");
+const addMember=document.querySelector("#addMember");
+const editorBackdrop=document.querySelector("#editorBackdrop");
+const memberForm=document.querySelector("#memberForm");
+const memberFile=document.querySelector("#memberFile");
+const memberName=document.querySelector("#memberName");
+const publicationName=document.querySelector("#publicationName");
+const memberLink=document.querySelector("#memberLink");
+const memberMemo=document.querySelector("#memberMemo");
+const iconPreview=document.querySelector("#iconPreview");
+const profileCard=document.querySelector("#profileCard");
+const cardAvatar=document.querySelector("#cardAvatar");
+const cardName=document.querySelector("#cardName");
+const cardPublication=document.querySelector("#cardPublication");
+const cardMemo=document.querySelector("#cardMemo");
+const cardLink=document.querySelector("#cardLink");
+const cardClose=document.querySelector("#cardClose");
+const formClose=document.querySelector("#formClose");
+let previewURL=null,memberSeq=0;
+
+function selectedValue(name){
+  return document.querySelector(`input[name="${name}"]:checked`)?.value;
+}
+function updateIconPreviewStyle(){
+  const shape=selectedValue("iconShape")||"circle";
+  const frame=selectedValue("iconFrame")||"white";
+  iconPreview.className=`shape-${shape} frame-${frame}`;
+}
+document.querySelectorAll('input[name="iconShape"],input[name="iconFrame"]').forEach(input=>{
+  input.addEventListener("change",updateIconPreviewStyle);
+});
+
+function createMember(src,name,publication,link="",memo="",shape="circle",frame="white",x=50,y=38){
+  memberSeq++;
+  const el=document.createElement("button");
+  el.type="button";
+  el.className=`member-ui shape-${shape} frame-${frame}`;
+  el.dataset.name=name;
+  el.dataset.publication=publication;
+  el.dataset.label=name+"\\A"+publication;
+  el.setAttribute("aria-label",name+" / "+publication);
+  el.style.left=x+"%";
+  el.style.top=y+"%";
+  el.style.setProperty("--floatDur",(5+Math.random()*2.3)+"s");
+  el.style.setProperty("--floatDelay",(-Math.random()*4)+"s");
+
+  const img=document.createElement("img");
+  img.src=src;img.alt=name;
+  el.appendChild(img);
+  memberLayer.appendChild(el);
+
+  let dragging=false,dx=0,dy=0,moved=false;
+  el.addEventListener("pointerdown",e=>{
+    dragging=true;moved=false;el.setPointerCapture(e.pointerId);
+    const r=el.getBoundingClientRect();
+    dx=e.clientX-(r.left+r.width/2);
+    dy=e.clientY-(r.top+r.height/2);
+    el.style.animationPlayState="paused";
+    el.style.zIndex="20";
+  });
+  el.addEventListener("pointermove",e=>{
+    if(!dragging)return;
+    moved=true;
+    const r=app.getBoundingClientRect();
+    const nx=Math.max(2,Math.min(98,(e.clientX-r.left-dx)/r.width*100));
+    const ny=Math.max(4,Math.min(96,(e.clientY-r.top-dy)/r.height*100));
+    el.style.left=nx+"%";
+    el.style.top=ny+"%";
+  });
+  const stop=()=>{
+    dragging=false;
+    el.style.animationPlayState="running";
+    el.style.zIndex="";
+  };
+  el.addEventListener("pointerup",e=>{
+    const wasMoved=moved;
+    stop();
+    if(!wasMoved)openProfileCard(el);
+  });
+  el.addEventListener("pointercancel",stop);
+}
+
+
+function openProfileCard(el){
+  cardAvatar.src=el.querySelector("img").src;
+  cardAvatar.alt=el.dataset.name;
+  cardAvatar.style.borderRadius=getComputedStyle(el).borderRadius;
+  cardName.textContent=el.dataset.name;
+  cardPublication.textContent=el.dataset.publication;
+  cardMemo.textContent=el.dataset.memo||"";
+  const link=(el.dataset.link||"").trim();
+  cardLink.hidden=!link;
+  if(link)cardLink.href=link;
+
+  profileCard.hidden=false;
+  if(innerWidth>700){
+    const er=el.getBoundingClientRect(), ar=app.getBoundingClientRect();
+    const cw=330, margin=14;
+    let left=er.left-ar.left+er.width/2-cw/2;
+    left=Math.max(margin,Math.min(ar.width-cw-margin,left));
+    let top=er.top-ar.top-190;
+    if(top<margin)top=er.bottom-ar.top+14;
+    profileCard.style.left=left+"px";
+    profileCard.style.top=top+"px";
+  }
+}
+function closeProfileCard(){profileCard.hidden=true}
+cardClose.addEventListener("click",closeProfileCard);
+app.addEventListener("pointerdown",e=>{
+  if(profileCard.hidden)return;
+  if(profileCard.contains(e.target)||e.target.closest?.(".member-ui"))return;
+  closeProfileCard();
+});
+
+function openEditor(){
+  editorBackdrop.hidden=false;
+  setTimeout(()=>memberName.focus(),30);
+}
+function closeEditor(){
+  editorBackdrop.hidden=true;
+  memberForm.reset();
+  iconPreview.innerHTML="<span>ICON</span>";
+  previewURL=null;
+  updateIconPreviewStyle();
+}
+addMember.addEventListener("click",openEditor);
+formClose.addEventListener("click",closeEditor);
+editorBackdrop.addEventListener("pointerdown",e=>{if(e.target===editorBackdrop)closeEditor()});
+
+memberFile.addEventListener("change",()=>{
+  const file=memberFile.files?.[0];
+  if(!file){iconPreview.innerHTML="<span>ICON</span>";previewURL=null;return}
+  const reader=new FileReader();
+  reader.onload=()=>{
+    previewURL=reader.result;
+    iconPreview.innerHTML="";
+    const img=document.createElement("img");
+    img.src=previewURL;img.alt="プレビュー";
+    iconPreview.appendChild(img);
+    updateIconPreviewStyle();
+  };
+  reader.readAsDataURL(file);
+});
+
+memberForm.addEventListener("submit",e=>{
+  e.preventDefault();
+  const name=memberName.value.trim();
+  const publication=publicationName.value.trim();
+  const link=memberLink.value.trim();
+  const memo=memberMemo.value.trim();
+  const shape=selectedValue("iconShape")||"circle";
+  const frame=selectedValue("iconFrame")||"white";
+  if(!name||!publication||!previewURL)return;
+  const offset=(memberSeq%5)-2;
+  createMember(previewURL,name,publication,link,memo,shape,frame,50+offset*8,34+(memberSeq%3)*9);
+  closeEditor();
+});
+
+
+// --- Wooden jukebox BGM control ---
+const jukeboxButton=document.querySelector("#jukeboxButton");
+const bgm=document.querySelector("#bgm");
+const musicToast=document.querySelector("#musicToast");
+let toastTimer=null;
+
+function showMusicToast(){
+  musicToast.hidden=false;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>musicToast.hidden=true,3200);
+}
+jukeboxButton.addEventListener("click",async()=>{
+  if(!bgm.paused){
+    bgm.pause();
+    jukeboxButton.classList.remove("playing");
+    return;
+  }
+  try{
+    await bgm.play();
+    jukeboxButton.classList.add("playing");
+  }catch(err){
+    jukeboxButton.classList.remove("playing");
+    showMusicToast();
+  }
+});
+bgm.addEventListener("error",showMusicToast);
+
+// --- 2.5D scene parallax ---
+const sceneLayers = {
+  distant: document.querySelector("#distantLayer"),
+  ground: document.querySelector("#groundLayer"),
+  tree: document.querySelector("#treeLayer"),
+  members: document.querySelector("#worldMemberLayer"),
+  foreground: document.querySelector("#foregroundLayer")
+};
+const sceneSign = document.querySelector("#sceneSign");
+let targetPX=0,targetPY=0,currentPX=0,currentPY=0;
+
+function setParallaxTarget(clientX,clientY){
+  targetPX=(clientX/innerWidth-.5)*2;
+  targetPY=(clientY/innerHeight-.5)*2;
+}
+window.addEventListener("pointermove",e=>setParallaxTarget(e.clientX,e.clientY),{passive:true});
+window.addEventListener("pointerleave",()=>{targetPX=0;targetPY=0});
+
+function parallaxFrame(){
+  currentPX+=(targetPX-currentPX)*.055;
+  currentPY+=(targetPY-currentPY)*.055;
+  const shift=(el,x,y,base="")=>{
+    if(el) el.style.transform=`${base} translate3d(${currentPX*x}px,${currentPY*y}px,0)`;
+  };
+  shift(sceneLayers.distant,-1.0,-0.5);
+  shift(sceneLayers.ground,-2.8,-1.4);
+  shift(sceneLayers.tree,-7,-3.5,"translateX(-50%)");
+  shift(sceneLayers.members,-7,-3.5);
+  shift(sceneLayers.foreground,-8,-4);
+  shift(sceneSign,-8,-4);
+  requestAnimationFrame(parallaxFrame);
+}
+if(!matchMedia("(prefers-reduced-motion: reduce)").matches)parallaxFrame();
+
+</script>
+</body>
+</html>

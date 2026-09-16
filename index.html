@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17241d">
+<title>つながりの木</title>
+<style>
+:root{
+  --ink:#f8f4e8;
+  --panel:rgba(18,31,24,.68);
+  --line:rgba(255,255,255,.20);
+  --gold:#d8b66b;
+  --stage-ratio:1672/941;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#17241d;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif}
+button,input,textarea{font:inherit}
+button{color:inherit}
+.app{position:fixed;inset:0;overflow:hidden;background:#17241d}
+
+/* 1672 × 941 master coordinate stage */
+.stage{
+  position:absolute;left:50%;top:50%;
+  width:max(100vw,calc(100vh * 1672 / 941));
+  height:max(100vh,calc(100vw * 941 / 1672));
+  transform:translate(-50%,-50%);
+  overflow:hidden;
+}
+.scene-layer{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:fill;pointer-events:none;user-select:none;
+  will-change:transform;
+}
+#distant{z-index:0}
+#ground{z-index:2}
+#tree{z-index:3}
+#memberLayer{position:absolute;inset:0;z-index:5;pointer-events:none;will-change:transform}
+#foreground{z-index:7}
+
+/* Member markers */
+.member{
+  position:absolute;width:var(--member-size,68px);aspect-ratio:1;
+  transform:translate(-50%,-50%);border:0;background:rgba(12,18,14,.62);
+  padding:0;pointer-events:auto;cursor:grab;touch-action:none;
+  backdrop-filter:blur(5px);
+  box-shadow:0 8px 24px rgba(0,0,0,.42),0 0 0 1px rgba(255,255,255,.20),0 0 18px rgba(216,182,107,.18);
+  transition:background .18s ease,box-shadow .18s ease;
+  overflow:hidden;
+}
+.member:active,.member.dragging{cursor:grabbing;z-index:50;box-shadow:0 14px 34px rgba(0,0,0,.52),0 0 0 2px rgba(216,182,107,.9)}
+.member:hover,.member:focus-visible{
+  background:rgba(12,18,14,.78);
+  box-shadow:0 10px 30px rgba(0,0,0,.50),0 0 0 2px rgba(216,182,107,.85),0 0 24px rgba(216,182,107,.30);
+}
+.member img{
+  display:block;width:100%;height:100%;object-fit:cover;
+  border:2px solid rgba(255,255,255,.92);
+  pointer-events:none;user-select:none;-webkit-user-drag:none;
+}
+.member.shape-circle,.member.shape-circle img{border-radius:50%}
+.member.shape-rounded,.member.shape-rounded img{border-radius:24%}
+.member.shape-square,.member.shape-square img{border-radius:5%}
+
+/* CSS title layer */
+.brand{
+  position:fixed;z-index:20;left:max(22px,env(safe-area-inset-left));
+  top:max(20px,env(safe-area-inset-top));
+  color:var(--ink);text-shadow:0 2px 18px rgba(0,0,0,.48);
+  pointer-events:none;
+}
+.brand h1{
+  margin:0;font-family:serif;font-weight:600;
+  font-size:clamp(25px,3vw,48px);letter-spacing:.12em;
+}
+.brand p{margin:.35em 0 0;font-size:clamp(10px,1vw,14px);letter-spacing:.18em;opacity:.72}
+
+/* UI */
+.toolbar{
+  position:fixed;z-index:30;right:max(18px,env(safe-area-inset-right));
+  top:max(18px,env(safe-area-inset-top));display:flex;gap:8px
+}
+.icon-btn{
+  width:44px;height:44px;border-radius:50%;border:1px solid var(--line);
+  background:rgba(18,31,24,.52);backdrop-filter:blur(10px);
+  display:grid;place-items:center;cursor:pointer;
+  box-shadow:0 7px 22px rgba(0,0,0,.18);
+}
+.icon-btn:hover{background:rgba(18,31,24,.78)}
+.icon-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#musicButton.playing svg{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(.84);opacity:.62}}
+.music-controls{
+  position:fixed;z-index:35;right:max(18px,env(safe-area-inset-right));top:70px;
+  display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);
+  border-radius:16px;background:rgba(18,31,24,.64);backdrop-filter:blur(12px);
+  box-shadow:0 10px 28px rgba(0,0,0,.22);color:var(--ink);
+  opacity:0;transform:translateY(-6px);pointer-events:none;transition:.2s ease
+}
+.music-controls.open{opacity:1;transform:none;pointer-events:auto}
+.music-mini-btn{
+  width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.09);
+  color:inherit;display:grid;place-items:center;cursor:pointer
+}
+.music-mini-btn:hover{background:rgba(255,255,255,.16)}
+.music-mini-btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.track-select{
+  min-width:158px;max-width:210px;height:34px;padding:0 30px 0 11px;border:1px solid rgba(255,255,255,.14);
+  border-radius:10px;background:rgba(255,255,255,.08);color:inherit;font:inherit;font-size:12px;cursor:pointer
+}
+.track-select option{color:#17231c;background:#f3efe4}
+.volume-wrap{display:flex;align-items:center;gap:7px}
+#volumeSlider{width:105px;accent-color:var(--gold);cursor:pointer}
+#volumeValue{font-size:11px;min-width:32px;text-align:right;opacity:.76}
+@media(max-width:760px){
+  .music-controls{top:68px;right:10px;left:10px;flex-wrap:wrap;justify-content:center}
+  .track-select{order:-1;width:100%;max-width:none}
+  .volume-wrap{gap:4px}#volumeSlider{width:min(180px,42vw)}#volumeValue{display:none}
+}
+
+.panel{
+  position:fixed;z-index:40;right:18px;top:72px;width:min(360px,calc(100vw - 36px));
+  padding:18px;border:1px solid var(--line);border-radius:18px;
+  background:var(--panel);backdrop-filter:blur(16px);color:var(--ink);
+  box-shadow:0 18px 50px rgba(0,0,0,.28);
+}
+.panel[hidden]{display:none}
+.panel h2{font-size:17px;margin:0 0 14px}
+.field{display:grid;gap:5px;margin:10px 0}
+.field label{font-size:11px;opacity:.72}
+.field input,.field textarea{
+  width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 11px;
+  background:rgba(255,255,255,.08);color:var(--ink);outline:none
+}
+.field textarea{min-height:64px;resize:vertical}
+
+
+.size-control{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.size-control input[type="range"]{width:100%;accent-color:var(--gold)}
+.size-value{min-width:48px;text-align:right;font-size:12px;opacity:.8}
+
+.shape-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.shape-option{position:relative}
+.shape-option input{position:absolute;opacity:0;pointer-events:none}
+.shape-option label{
+  min-height:54px;border:1px solid var(--line);border-radius:11px;
+  background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;
+  gap:7px;cursor:pointer;font-size:11px;opacity:.82;
+}
+.shape-option svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7}
+.shape-option input:checked + label{
+  border-color:rgba(216,182,107,.78);
+  background:rgba(216,182,107,.17);
+  box-shadow:0 0 0 1px rgba(216,182,107,.25) inset;
+  opacity:1;
+}
+
+.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.action{
+  border:1px solid var(--line);border-radius:999px;padding:8px 14px;
+  background:rgba(255,255,255,.08);cursor:pointer
+}
+.action.primary{background:rgba(216,182,107,.22);border-color:rgba(216,182,107,.48)}
+.action.danger{background:rgba(160,55,55,.18);border-color:rgba(220,100,100,.42)}
+.profile-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+
+.profile{
+  position:fixed;z-index:45;left:50%;bottom:22px;transform:translateX(-50%);
+  width:min(420px,calc(100vw - 28px));padding:16px;
+  border:1px solid var(--line);border-radius:18px;background:var(--panel);
+  backdrop-filter:blur(16px);color:var(--ink);box-shadow:0 18px 50px rgba(0,0,0,.3)
+}
+.profile[hidden]{display:none}
+.profile-head{display:flex;gap:12px;align-items:center}
+.profile img{width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.8)}
+.profile h3{margin:0;font-size:16px}
+.profile small{opacity:.65}
+.profile p{font-size:13px;line-height:1.7;opacity:.84}
+.profile a{color:var(--ink);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.35)}
+.close{position:absolute;right:12px;top:10px;border:0;background:none;font-size:22px;cursor:pointer}
+
+.hint{
+  position:fixed;z-index:20;left:50%;bottom:max(16px,env(safe-area-inset-bottom));
+  transform:translateX(-50%);padding:7px 12px;border-radius:999px;
+  background:rgba(18,31,24,.38);backdrop-filter:blur(8px);color:rgba(255,255,255,.72);
+  font-size:11px;pointer-events:none;transition:opacity .5s
+}
+@media(max-width:640px){
+  .brand{top:16px;left:16px}
+  .brand p{display:none}
+  .toolbar{top:14px;right:14px}
+  .icon-btn{width:40px;height:40px}
+  .panel{left:14px;right:14px;top:66px;width:auto}
+}
+@media(prefers-reduced-motion:reduce){
+  .scene-layer,#memberLayer{transform:none!important}
+  #musicButton.playing svg{animation:none}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="stage" id="stage">
+    <img id="distant" class="scene-layer" src="assets/scene/layer-00-distant.png" alt="">
+    <img id="ground" class="scene-layer" src="assets/scene/layer-10-ground.png" alt="">
+    <img id="tree" class="scene-layer" src="assets/scene/layer-20-tree.png" alt="">
+    <div id="memberLayer"></div>
+    <img id="foreground" class="scene-layer" src="assets/scene/layer-40-foreground.png" alt="">
+  </div>
+
+  <header class="brand">
+    <h1>つながりの木</h1>
+    <p>人と人とのつながりを、一本の木に。</p>
+  </header>
+
+  <nav class="toolbar" aria-label="操作">
+    <button class="icon-btn" id="musicButton" type="button" aria-label="BGMを再生">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 18V6l10-2v12"/>
+        <circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>
+      </svg>
+    </button>
+    <button class="icon-btn" id="addButton" type="button" aria-label="メンバーを追加">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+    </button>
+  </nav>
+
+  <div class="music-controls" id="musicControls" aria-label="BGMコントロール">
+    <select class="track-select" id="trackSelect" aria-label="BGMを選択">
+      <option value="assets/audio/elegie-de-la-harpe.mp3">Élégie de la Harpe</option>
+      <option value="assets/audio/gensou-no-ibuki.mp3">幻想の息吹</option>
+      <option value="assets/audio/storybook-waltz.mp3">Storybook Waltz</option>
+    </select>
+    <button class="music-mini-btn" id="playPauseButton" type="button" aria-label="再生">
+      <svg id="playPauseIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+    <button class="music-mini-btn" id="stopButton" type="button" aria-label="停止">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+    </button>
+    <button class="music-mini-btn" id="muteButton" type="button" aria-label="ミュート">
+      <svg id="muteIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15 9.5a4 4 0 0 1 0 5"/><path d="M17.5 7a7 7 0 0 1 0 10"/></svg>
+    </button>
+    <div class="volume-wrap">
+      <input id="volumeSlider" type="range" min="0" max="100" value="55" aria-label="BGM音量">
+      <span id="volumeValue">55%</span>
+    </div>
+  </div>
+
+  <section class="panel" id="addPanel" hidden>
+    <h2 id="formTitle">つながりを追加</h2>
+    <form id="memberForm">
+      <div class="field"><label for="name">名前</label><input id="name" required></div>
+      <div class="field"><label for="publication">パブリケーション名</label><input id="publication"></div>
+      <div class="field"><label for="url">SubstackパブリケーションURL</label><input id="url" type="url" placeholder="https://..."></div>
+      <div class="field"><label for="icon">アイコン画像</label><input id="icon" type="file" accept="image/*"></div>
+      <div class="field">
+        <label>アイコンの形</label>
+        <div class="shape-picker" role="radiogroup" aria-label="アイコンの形">
+          <div class="shape-option">
+            <input type="radio" name="shape" id="shapeCircle" value="circle" checked>
+            <label for="shapeCircle">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>丸
+            </label>
+          </div>
+          <div class="shape-option">
+            <input type="radio" name="shape" id="shapeRounded" value="rounded">
+            <label for="shapeRounded">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>角丸
+            </label>
+          </div>
+          <div class="shape-option">
+            <input type="radio" name="shape" id="shapeSquare" value="square">
+            <label for="shapeSquare">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx=".6"/></svg>四角
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="iconSize">アイコンの大きさ</label>
+        <div class="size-control">
+          <input id="iconSize" type="range" min="40" max="120" value="68" step="2">
+          <output id="iconSizeValue" class="size-value" for="iconSize">68px</output>
+        </div>
+      </div>
+      <div class="field"><label for="memo">メモ</label><textarea id="memo"></textarea></div>
+      <div class="actions">
+        <button class="action" id="cancelAdd" type="button">閉じる</button>
+        <button class="action primary" id="saveMember" type="submit">追加</button>
+      </div>
+    </form>
+  </section>
+
+  <article class="profile" id="profile" hidden>
+    <button class="close" id="closeProfile" type="button" aria-label="閉じる">×</button>
+    <div class="profile-head">
+      <img id="profileIcon" alt="">
+      <div><h3 id="profileName"></h3><small id="profilePublication"></small></div>
+    </div>
+    <p id="profileMemo"></p>
+    <a id="profileLink" target="_blank" rel="noopener">Substackを読む ↗</a>
+    <div class="profile-actions">
+      <button class="action" id="editMember" type="button">編集</button>
+      <button class="action danger" id="deleteMember" type="button">削除</button>
+    </div>
+  </article>
+
+  <div class="hint" id="hint">＋ からつながりを追加できます</div>
+
+  <audio id="bgm" loop preload="metadata" src="assets/audio/elegie-de-la-harpe.mp3"></audio>
+</div>
+
+<script>
+const stage = document.getElementById("stage");
+const memberLayer = document.getElementById("memberLayer");
+const addPanel = document.getElementById("addPanel");
+const addButton = document.getElementById("addButton");
+const cancelAdd = document.getElementById("cancelAdd");
+const form = document.getElementById("memberForm");
+const profile = document.getElementById("profile");
+const bgm = document.getElementById("bgm");
+const musicButton = document.getElementById("musicButton");
+const musicControls = document.getElementById("musicControls");
+const playPauseButton = document.getElementById("playPauseButton");
+const playPauseIcon = document.getElementById("playPauseIcon");
+const stopButton = document.getElementById("stopButton");
+const muteButton = document.getElementById("muteButton");
+const muteIcon = document.getElementById("muteIcon");
+const volumeSlider = document.getElementById("volumeSlider");
+const volumeValue = document.getElementById("volumeValue");
+const trackSelect = document.getElementById("trackSelect");
+let members = [];
+let memberId = 0;
+let activeMember = null;
+let editingMember = null;
+
+const iconSize = document.getElementById("iconSize");
+const iconSizeValue = document.getElementById("iconSizeValue");
+iconSize.addEventListener("input", () => {
+  iconSizeValue.value = iconSize.value + "px";
+  iconSizeValue.textContent = iconSize.value + "px";
+});
+
+function resetMemberForm(){
+  editingMember = null;
+  form.reset();
+  document.getElementById("shapeCircle").checked = true;
+  iconSize.value = 68;
+  iconSizeValue.value = "68px";
+  iconSizeValue.textContent = "68px";
+  document.getElementById("formTitle").textContent = "つながりを追加";
+  document.getElementById("saveMember").textContent = "追加";
+}
+addButton.onclick = () => {
+  if(addPanel.hidden){ resetMemberForm(); addPanel.hidden = false; profile.hidden = true; }
+  else addPanel.hidden = true;
+};
+cancelAdd.onclick = () => { addPanel.hidden = true; resetMemberForm(); };
+document.getElementById("closeProfile").onclick = () => profile.hidden = true;
+
+const savedVolume = Number(localStorage.getItem("treeBgmVolume"));
+const initialVolume = Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 1 ? savedVolume : 0.55;
+bgm.volume = initialVolume;
+volumeSlider.value = Math.round(initialVolume * 100);
+volumeValue.textContent = volumeSlider.value + "%";
+
+const savedTrack = localStorage.getItem("treeBgmTrack");
+if (savedTrack && [...trackSelect.options].some(option => option.value === savedTrack)) {
+  trackSelect.value = savedTrack;
+}
+bgm.src = trackSelect.value;
+
+function syncMusicUI(){
+  const playing = !bgm.paused && !bgm.ended;
+  musicButton.classList.toggle("playing", playing);
+  musicButton.setAttribute("aria-label", playing ? "BGMコントロール（再生中）" : "BGMコントロール");
+  playPauseButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
+  playPauseIcon.innerHTML = playing
+    ? '<path d="M8 5v14M16 5v14"/>'
+    : '<path d="M8 5v14l11-7z"/>';
+  const muted = bgm.muted || bgm.volume === 0;
+  muteButton.setAttribute("aria-label", muted ? "ミュート解除" : "ミュート");
+  muteIcon.innerHTML = muted
+    ? '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6M21 9l-5 6"/>'
+    : '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15 9.5a4 4 0 0 1 0 5"/><path d="M17.5 7a7 7 0 0 1 0 10"/>';
+}
+
+async function playBgm(){
+  try {
+    await bgm.play();
+    syncMusicUI();
+  } catch {
+    alert("BGMを再生できませんでした。音声ファイルを確認してください。");
+  }
+}
+
+musicButton.onclick = () => {
+  musicControls.classList.toggle("open");
+};
+
+playPauseButton.onclick = async () => {
+  if (bgm.paused) await playBgm();
+  else { bgm.pause(); syncMusicUI(); }
+};
+
+stopButton.onclick = () => {
+  bgm.pause();
+  bgm.currentTime = 0;
+  syncMusicUI();
+};
+
+muteButton.onclick = () => {
+  bgm.muted = !bgm.muted;
+  syncMusicUI();
+};
+
+volumeSlider.addEventListener("input", () => {
+  const v = Number(volumeSlider.value) / 100;
+  bgm.volume = v;
+  if (v > 0) bgm.muted = false;
+  volumeValue.textContent = volumeSlider.value + "%";
+  localStorage.setItem("treeBgmVolume", String(v));
+  syncMusicUI();
+});
+
+
+trackSelect.addEventListener("change", async () => {
+  const wasPlaying = !bgm.paused;
+  bgm.pause();
+  bgm.src = trackSelect.value;
+  bgm.load();
+  localStorage.setItem("treeBgmTrack", trackSelect.value);
+  if (wasPlaying) await playBgm();
+  else syncMusicUI();
+});
+
+bgm.addEventListener("play", syncMusicUI);
+bgm.addEventListener("pause", syncMusicUI);
+syncMusicUI();
+
+form.onsubmit = e => {
+  e.preventDefault();
+  const file = document.getElementById("icon").files[0];
+  if(editingMember){
+    editingMember.name = document.getElementById("name").value.trim();
+    editingMember.publication = document.getElementById("publication").value.trim();
+    editingMember.url = document.getElementById("url").value.trim();
+    editingMember.memo = document.getElementById("memo").value.trim();
+    editingMember.shape = form.elements.shape.value;
+    editingMember.size = Number(iconSize.value);
+    if(file) editingMember.icon = URL.createObjectURL(file);
+    updateMemberElement(editingMember);
+  } else {
+    const member = {
+      id: ++memberId,
+      name: document.getElementById("name").value.trim(),
+      publication: document.getElementById("publication").value.trim(),
+      url: document.getElementById("url").value.trim(),
+      memo: document.getElementById("memo").value.trim(),
+      icon: file ? URL.createObjectURL(file) : "",
+      shape: form.elements.shape.value,
+      size: Number(iconSize.value),
+      x: 50 + (Math.random() - .5) * 28,
+      y: 45 + (Math.random() - .5) * 25
+    };
+    members.push(member);
+    renderMember(member);
+  }
+  addPanel.hidden = true;
+  document.getElementById("hint").style.opacity = "0";
+  resetMemberForm();
+};
+
+function updateMemberElement(m){
+  const b = memberLayer.querySelector(`[data-member-id="${m.id}"]`);
+  if(!b) return;
+  b.className = "member shape-" + (m.shape || "circle");
+  b.style.setProperty("--member-size", (m.size || 68) + "px");
+  b.setAttribute("aria-label", m.name);
+  b.querySelector("img").src = m.icon || defaultAvatar(m.name);
+}
+
+function renderMember(m){
+  const b = document.createElement("button");
+  b.className = "member shape-" + (m.shape || "circle");
+  b.type = "button";
+  b.dataset.memberId = m.id;
+  b.style.left = m.x + "%";
+  b.style.top = m.y + "%";
+  b.style.setProperty("--member-size", (m.size || 68) + "px");
+  b.setAttribute("aria-label", m.name);
+  const img = document.createElement("img");
+  img.src = m.icon || defaultAvatar(m.name);
+  img.alt = "";
+  b.append(img);
+  memberLayer.append(b);
+
+  let dragging = false, moved = false, startX = 0, startY = 0;
+  b.addEventListener("pointerdown", e => {
+    if(e.button !== undefined && e.button !== 0) return;
+    dragging = true;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    b.classList.add("dragging");
+    b.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  b.addEventListener("pointermove", e => {
+    if(!dragging) return;
+    const distance = Math.hypot(e.clientX-startX,e.clientY-startY);
+    if(distance >= 4) moved = true;
+    if(!moved) return;
+    const r = stage.getBoundingClientRect();
+    const nx = Math.max(2,Math.min(98,(e.clientX-r.left)/r.width*100));
+    const ny = Math.max(2,Math.min(98,(e.clientY-r.top)/r.height*100));
+    m.x=nx; m.y=ny;
+    b.style.left=nx+"%";
+    b.style.top=ny+"%";
+  });
+  const endDrag = e => {
+    if(!dragging) return;
+    dragging = false;
+    b.classList.remove("dragging");
+    try{ b.releasePointerCapture(e.pointerId); }catch(_){}
+    if(!moved) showProfile(m);
+  };
+  b.addEventListener("pointerup", endDrag);
+  b.addEventListener("pointercancel", () => {
+    dragging=false;
+    b.classList.remove("dragging");
+  });
+}
+
+function showProfile(m){
+  activeMember = m;
+  document.getElementById("profileIcon").src = m.icon || defaultAvatar(m.name);
+  document.getElementById("profileName").textContent = m.name;
+  document.getElementById("profilePublication").textContent = m.publication;
+  document.getElementById("profileMemo").textContent = m.memo || "";
+  const a = document.getElementById("profileLink");
+  a.href = m.url || "#";
+  a.style.display = m.url ? "inline-block" : "none";
+  profile.hidden = false;
+}
+
+
+document.getElementById("editMember").onclick = () => {
+  if(!activeMember) return;
+  editingMember = activeMember;
+  document.getElementById("name").value = activeMember.name || "";
+  document.getElementById("publication").value = activeMember.publication || "";
+  document.getElementById("url").value = activeMember.url || "";
+  document.getElementById("memo").value = activeMember.memo || "";
+  const shape = document.querySelector(`input[name="shape"][value="${activeMember.shape || "circle"}"]`);
+  if(shape) shape.checked = true;
+  iconSize.value = activeMember.size || 68;
+  iconSizeValue.value = iconSize.value + "px";
+  iconSizeValue.textContent = iconSize.value + "px";
+  document.getElementById("icon").value = "";
+  document.getElementById("formTitle").textContent = "つながりを編集";
+  document.getElementById("saveMember").textContent = "変更を保存";
+  profile.hidden = true;
+  addPanel.hidden = false;
+};
+
+document.getElementById("deleteMember").onclick = () => {
+  if(!activeMember) return;
+  if(!confirm(`${activeMember.name || "このアイコン"}を削除しますか？`)) return;
+  const id = activeMember.id;
+  members = members.filter(m => m.id !== id);
+  const el = memberLayer.querySelector(`[data-member-id="${id}"]`);
+  if(el) el.remove();
+  activeMember = null;
+  profile.hidden = true;
+};
+
+function defaultAvatar(name){
+  const initial = (name || "?").slice(0,1);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" rx="60" fill="#596b57"/><text x="60" y="74" text-anchor="middle" font-size="50" fill="#fff" font-family="sans-serif">${initial}</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+/* Tiny parallax: translate only; never scale scene assets. */
+if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  window.addEventListener("pointermove", e => {
+    const dx = (e.clientX / innerWidth - .5);
+    const dy = (e.clientY / innerHeight - .5);
+    document.getElementById("distant").style.transform = `translate(${dx*-2}px,${dy*-1}px)`;
+    document.getElementById("ground").style.transform = `translate(${dx*-3}px,${dy*-1.5}px)`;
+    document.getElementById("tree").style.transform = `translate(${dx*-5}px,${dy*-2.5}px)`;
+    memberLayer.style.transform = `translate(${dx*-5}px,${dy*-2.5}px)`;
+    document.getElementById("foreground").style.transform = `translate(${dx*-7}px,${dy*-3.5}px)`;
+  }, {passive:true});
+}
+</script>
+</body>
+</html>
