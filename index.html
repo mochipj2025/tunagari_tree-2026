@@ -185,6 +185,9 @@ button{color:inherit}
   background:rgba(18,31,24,.38);backdrop-filter:blur(8px);color:rgba(255,255,255,.72);
   font-size:11px;pointer-events:none;transition:opacity .5s
 }
+
+.auth-box{position:fixed;z-index:60;right:18px;bottom:18px;width:min(340px,calc(100vw - 36px));padding:14px;border:1px solid var(--line);border-radius:18px;background:var(--panel);backdrop-filter:blur(16px);box-shadow:0 18px 50px rgba(0,0,0,.28);color:var(--ink)}
+.auth-box[hidden]{display:none}.auth-row{display:flex;gap:8px}.auth-row input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.08);color:var(--ink);padding:10px 12px}.auth-title{font-size:13px;font-weight:700;margin:0 0 8px}.auth-note{font-size:11px;line-height:1.55;opacity:.72;margin:8px 0 0}.auth-status{font-size:11px;line-height:1.5;margin-top:8px}.auth-user{position:fixed;z-index:42;right:18px;top:76px;display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(18,31,24,.52);backdrop-filter:blur(10px);color:var(--ink);font-size:11px}.auth-user[hidden]{display:none}.auth-user button{border:0;background:none;color:inherit;cursor:pointer;text-decoration:underline}.owner-only[hidden]{display:none!important}
 @media(max-width:640px){
   .brand{top:16px;left:16px}
   .brand p{display:none}
@@ -220,7 +223,7 @@ button{color:inherit}
         <circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>
       </svg>
     </button>
-    <button class="icon-btn" id="addButton" type="button" aria-label="メンバーを追加">
+    <button class="icon-btn owner-only" id="addButton" hidden type="button" aria-label="メンバーを追加">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 5v14M5 12h14"/>
       </svg>
@@ -301,18 +304,31 @@ button{color:inherit}
     </div>
     <p id="profileMemo"></p>
     <a id="profileLink" target="_blank" rel="noopener">Substackを読む ↗</a>
-    <div class="profile-actions">
+    <div class="profile-actions owner-only" id="profileActions" hidden>
       <button class="action" id="editMember" type="button">編集</button>
       <button class="action danger" id="deleteMember" type="button">削除</button>
     </div>
   </article>
+
+  <section class="auth-box" id="authBox">
+    <p class="auth-title">木を編集する</p>
+    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="メールアドレス"><button class="action primary" id="sendLogin" type="button">ログイン</button></div>
+    <p class="auth-note">メールに届くログインリンクを開くと、この端末で自分の木を編集できます。</p>
+    <div class="auth-status" id="authStatus"></div>
+  </section>
+  <div class="auth-user" id="authUser" hidden><span id="authUserLabel"></span><button id="logoutButton" type="button">ログアウト</button></div>
 
   <div class="hint" id="hint">＋ からつながりを追加できます</div>
 
   <audio id="bgm" loop preload="metadata" src="assets/audio/elegie-de-la-harpe.mp3"></audio>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+const SUPABASE_URL = "https://doontvirtypnzrbpvmcu.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_UzgyTtn3PtsensSY9KxrGw_ZDdKIeon";
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
 const stage = document.getElementById("stage");
 const memberLayer = document.getElementById("memberLayer");
 const addPanel = document.getElementById("addPanel");
@@ -440,37 +456,131 @@ bgm.addEventListener("play", syncMusicUI);
 bgm.addEventListener("pause", syncMusicUI);
 syncMusicUI();
 
-form.onsubmit = e => {
-  e.preventDefault();
-  const file = document.getElementById("icon").files[0];
-  if(editingMember){
-    editingMember.name = document.getElementById("name").value.trim();
-    editingMember.publication = document.getElementById("publication").value.trim();
-    editingMember.url = document.getElementById("url").value.trim();
-    editingMember.memo = document.getElementById("memo").value.trim();
-    editingMember.shape = form.elements.shape.value;
-    editingMember.size = Number(iconSize.value);
-    if(file) editingMember.icon = URL.createObjectURL(file);
-    updateMemberElement(editingMember);
+let currentUser = null;
+let currentTree = null;
+let isOwner = false;
+
+function setOwnerUI(owner){
+  isOwner = !!owner;
+  addButton.hidden = !isOwner;
+  document.getElementById("profileActions").hidden = !isOwner;
+  document.getElementById("hint").textContent = isOwner ? "＋ からつながりを追加できます" : "公開されているつながりの木";
+}
+
+function clearMembers(){
+  members = [];
+  memberLayer.innerHTML = "";
+  activeMember = null;
+  profile.hidden = true;
+}
+
+function dbToMember(row){
+  return { id: row.id, name: row.name || "", publication: row.publication || "", url: row.substack_url || "", memo: row.memo || "", icon: row.icon_url || "", shape: row.shape || "circle", size: row.size || 68, x: row.x ?? 50, y: row.y ?? 45 };
+}
+
+async function loadMembers(treeId){
+  clearMembers();
+  const {data, error} = await supabaseClient.from("members").select("*").eq("tree_id", treeId).order("created_at", {ascending:true});
+  if(error){ console.error(error); return; }
+  members = (data || []).map(dbToMember);
+  members.forEach(renderMember);
+}
+
+function randomSlug(){ return "tree-" + crypto.randomUUID().replaceAll("-", "").slice(0,12); }
+
+async function loadApp(){
+  const {data:{session}} = await supabaseClient.auth.getSession();
+  currentUser = session?.user || null;
+  const requestedSlug = new URLSearchParams(location.search).get("tree");
+
+  if(requestedSlug){
+    const {data:tree, error} = await supabaseClient.from("trees").select("*").eq("slug", requestedSlug).maybeSingle();
+    if(error || !tree){ clearMembers(); setOwnerUI(false); return; }
+    currentTree = tree;
+    setOwnerUI(!!currentUser && tree.owner_id === currentUser.id);
+    await loadMembers(tree.id);
+  } else if(currentUser){
+    let {data:tree, error} = await supabaseClient.from("trees").select("*").eq("owner_id", currentUser.id).order("created_at", {ascending:true}).limit(1).maybeSingle();
+    if(error){ console.error(error); return; }
+    if(!tree){
+      const created = await supabaseClient.from("trees").insert({title:"つながりの木", slug:randomSlug(), is_public:true}).select().single();
+      if(created.error){ console.error(created.error); return; }
+      tree = created.data;
+    }
+    currentTree = tree;
+    setOwnerUI(true);
+    await loadMembers(tree.id);
   } else {
-    const member = {
-      id: ++memberId,
+    currentTree = null; clearMembers(); setOwnerUI(false);
+  }
+
+  document.getElementById("authBox").hidden = !!currentUser;
+  document.getElementById("authUser").hidden = !currentUser;
+  document.getElementById("authUserLabel").textContent = currentUser ? "編集モード" : "";
+}
+
+async function uploadIcon(file){
+  if(!file || !currentUser || !currentTree) return "";
+  const ext = (file.name.split(".").pop() || "webp").toLowerCase().replace(/[^a-z0-9]/g, "") || "webp";
+  const path = `${currentUser.id}/${currentTree.id}/${crypto.randomUUID()}.${ext}`;
+  const {error} = await supabaseClient.storage.from("member-icons").upload(path, file, {upsert:false, contentType:file.type || undefined});
+  if(error) throw error;
+  return supabaseClient.storage.from("member-icons").getPublicUrl(path).data.publicUrl;
+}
+
+function storagePathFromPublicUrl(url){
+  if(!url) return null;
+  const marker = "/storage/v1/object/public/member-icons/";
+  const i = url.indexOf(marker);
+  return i >= 0 ? decodeURIComponent(url.slice(i + marker.length)) : null;
+}
+
+async function deleteStoredIcon(url){
+  const path = storagePathFromPublicUrl(url);
+  if(path) await supabaseClient.storage.from("member-icons").remove([path]);
+}
+
+form.onsubmit = async e => {
+  e.preventDefault();
+  if(!isOwner || !currentTree) return;
+  const saveButton = document.getElementById("saveMember");
+  saveButton.disabled = true;
+  try{
+    const file = document.getElementById("icon").files[0];
+    let iconUrl = editingMember?.icon || "";
+    if(file){
+      const old = iconUrl;
+      iconUrl = await uploadIcon(file);
+      if(old) await deleteStoredIcon(old);
+    }
+    const values = {
+      tree_id: currentTree.id,
       name: document.getElementById("name").value.trim(),
       publication: document.getElementById("publication").value.trim(),
-      url: document.getElementById("url").value.trim(),
+      substack_url: document.getElementById("url").value.trim(),
       memo: document.getElementById("memo").value.trim(),
-      icon: file ? URL.createObjectURL(file) : "",
+      icon_url: iconUrl,
       shape: form.elements.shape.value,
-      size: Number(iconSize.value),
-      x: 50 + (Math.random() - .5) * 28,
-      y: 45 + (Math.random() - .5) * 25
+      size: Number(iconSize.value)
     };
-    members.push(member);
-    renderMember(member);
-  }
-  addPanel.hidden = true;
-  document.getElementById("hint").style.opacity = "0";
-  resetMemberForm();
+    if(editingMember){
+      const {data,error} = await supabaseClient.from("members").update(values).eq("id", editingMember.id).select().single();
+      if(error) throw error;
+      Object.assign(editingMember, dbToMember(data));
+      updateMemberElement(editingMember);
+    } else {
+      values.x = 50 + (Math.random() - .5) * 28;
+      values.y = 45 + (Math.random() - .5) * 25;
+      const {data,error} = await supabaseClient.from("members").insert(values).select().single();
+      if(error) throw error;
+      const member = dbToMember(data);
+      members.push(member); renderMember(member);
+    }
+    addPanel.hidden = true;
+    document.getElementById("hint").style.opacity = "0";
+    resetMemberForm();
+  }catch(err){ console.error(err); alert("保存できませんでした: " + (err.message || err)); }
+  finally{ saveButton.disabled = false; }
 };
 
 function updateMemberElement(m){
@@ -485,97 +595,87 @@ function updateMemberElement(m){
 function renderMember(m){
   const b = document.createElement("button");
   b.className = "member shape-" + (m.shape || "circle");
-  b.type = "button";
-  b.dataset.memberId = m.id;
-  b.style.left = m.x + "%";
-  b.style.top = m.y + "%";
-  b.style.setProperty("--member-size", (m.size || 68) + "px");
-  b.setAttribute("aria-label", m.name);
-  const img = document.createElement("img");
-  img.src = m.icon || defaultAvatar(m.name);
-  img.alt = "";
-  b.append(img);
-  memberLayer.append(b);
-
-  let dragging = false, moved = false, startX = 0, startY = 0;
+  b.type = "button"; b.dataset.memberId = m.id;
+  b.style.left = m.x + "%"; b.style.top = m.y + "%";
+  b.style.setProperty("--member-size", (m.size || 68) + "px"); b.setAttribute("aria-label", m.name);
+  const img = document.createElement("img"); img.src = m.icon || defaultAvatar(m.name); img.alt = ""; b.append(img); memberLayer.append(b);
+  let dragging=false,moved=false,startX=0,startY=0;
   b.addEventListener("pointerdown", e => {
+    if(!isOwner) return;
     if(e.button !== undefined && e.button !== 0) return;
-    dragging = true;
-    moved = false;
-    startX = e.clientX;
-    startY = e.clientY;
-    b.classList.add("dragging");
-    b.setPointerCapture(e.pointerId);
-    e.preventDefault();
+    dragging=true;moved=false;startX=e.clientX;startY=e.clientY;b.classList.add("dragging");b.setPointerCapture(e.pointerId);e.preventDefault();
   });
   b.addEventListener("pointermove", e => {
-    if(!dragging) return;
-    const distance = Math.hypot(e.clientX-startX,e.clientY-startY);
-    if(distance >= 4) moved = true;
+    if(!dragging || !isOwner) return;
+    if(Math.hypot(e.clientX-startX,e.clientY-startY)>=4) moved=true;
     if(!moved) return;
-    const r = stage.getBoundingClientRect();
-    const nx = Math.max(2,Math.min(98,(e.clientX-r.left)/r.width*100));
-    const ny = Math.max(2,Math.min(98,(e.clientY-r.top)/r.height*100));
-    m.x=nx; m.y=ny;
-    b.style.left=nx+"%";
-    b.style.top=ny+"%";
+    const r=stage.getBoundingClientRect();
+    const nx=Math.max(2,Math.min(98,(e.clientX-r.left)/r.width*100));
+    const ny=Math.max(2,Math.min(98,(e.clientY-r.top)/r.height*100));
+    m.x=nx;m.y=ny;b.style.left=nx+"%";b.style.top=ny+"%";
   });
-  const endDrag = e => {
-    if(!dragging) return;
-    dragging = false;
-    b.classList.remove("dragging");
-    try{ b.releasePointerCapture(e.pointerId); }catch(_){}
+  const endDrag=async e=>{
+    if(!dragging) { if(!isOwner) showProfile(m); return; }
+    dragging=false;b.classList.remove("dragging");try{b.releasePointerCapture(e.pointerId)}catch(_){}
     if(!moved) showProfile(m);
+    else {
+      const {error}=await supabaseClient.from("members").update({x:m.x,y:m.y}).eq("id",m.id);
+      if(error) console.error("position save failed",error);
+    }
   };
-  b.addEventListener("pointerup", endDrag);
-  b.addEventListener("pointercancel", () => {
-    dragging=false;
-    b.classList.remove("dragging");
-  });
+  b.addEventListener("pointerup",endDrag);
+  b.addEventListener("click",()=>{ if(!isOwner) showProfile(m); });
+  b.addEventListener("pointercancel",()=>{dragging=false;b.classList.remove("dragging")});
 }
 
 function showProfile(m){
-  activeMember = m;
-  document.getElementById("profileIcon").src = m.icon || defaultAvatar(m.name);
-  document.getElementById("profileName").textContent = m.name;
-  document.getElementById("profilePublication").textContent = m.publication;
-  document.getElementById("profileMemo").textContent = m.memo || "";
-  const a = document.getElementById("profileLink");
-  a.href = m.url || "#";
-  a.style.display = m.url ? "inline-block" : "none";
-  profile.hidden = false;
+  activeMember=m;
+  document.getElementById("profileIcon").src=m.icon||defaultAvatar(m.name);
+  document.getElementById("profileName").textContent=m.name;
+  document.getElementById("profilePublication").textContent=m.publication;
+  document.getElementById("profileMemo").textContent=m.memo||"";
+  const a=document.getElementById("profileLink");a.href=m.url||"#";a.style.display=m.url?"inline-block":"none";
+  document.getElementById("profileActions").hidden=!isOwner;
+  profile.hidden=false;
 }
 
-
-document.getElementById("editMember").onclick = () => {
-  if(!activeMember) return;
-  editingMember = activeMember;
-  document.getElementById("name").value = activeMember.name || "";
-  document.getElementById("publication").value = activeMember.publication || "";
-  document.getElementById("url").value = activeMember.url || "";
-  document.getElementById("memo").value = activeMember.memo || "";
-  const shape = document.querySelector(`input[name="shape"][value="${activeMember.shape || "circle"}"]`);
-  if(shape) shape.checked = true;
-  iconSize.value = activeMember.size || 68;
-  iconSizeValue.value = iconSize.value + "px";
-  iconSizeValue.textContent = iconSize.value + "px";
-  document.getElementById("icon").value = "";
-  document.getElementById("formTitle").textContent = "つながりを編集";
-  document.getElementById("saveMember").textContent = "変更を保存";
-  profile.hidden = true;
-  addPanel.hidden = false;
+document.getElementById("editMember").onclick=()=>{
+  if(!activeMember || !isOwner) return;
+  editingMember=activeMember;
+  document.getElementById("name").value=activeMember.name||"";
+  document.getElementById("publication").value=activeMember.publication||"";
+  document.getElementById("url").value=activeMember.url||"";
+  document.getElementById("memo").value=activeMember.memo||"";
+  const shape=document.querySelector(`input[name="shape"][value="${activeMember.shape||"circle"}"]`);if(shape)shape.checked=true;
+  iconSize.value=activeMember.size||68;iconSizeValue.value=iconSize.value+"px";iconSizeValue.textContent=iconSize.value+"px";
+  document.getElementById("icon").value="";document.getElementById("formTitle").textContent="つながりを編集";document.getElementById("saveMember").textContent="変更を保存";
+  profile.hidden=true;addPanel.hidden=false;
 };
 
-document.getElementById("deleteMember").onclick = () => {
-  if(!activeMember) return;
-  if(!confirm(`${activeMember.name || "このアイコン"}を削除しますか？`)) return;
-  const id = activeMember.id;
-  members = members.filter(m => m.id !== id);
-  const el = memberLayer.querySelector(`[data-member-id="${id}"]`);
-  if(el) el.remove();
-  activeMember = null;
-  profile.hidden = true;
+document.getElementById("deleteMember").onclick=async()=>{
+  if(!activeMember || !isOwner) return;
+  if(!confirm(`${activeMember.name||"このアイコン"}を削除しますか？`)) return;
+  const target=activeMember;
+  const {error}=await supabaseClient.from("members").delete().eq("id",target.id);
+  if(error){alert("削除できませんでした: "+error.message);return;}
+  await deleteStoredIcon(target.icon);
+  members=members.filter(m=>m.id!==target.id);
+  memberLayer.querySelector(`[data-member-id="${target.id}"]`)?.remove();
+  activeMember=null;profile.hidden=true;
 };
+
+const authStatus=document.getElementById("authStatus");
+document.getElementById("sendLogin").onclick=async()=>{
+  const email=document.getElementById("authEmail").value.trim();
+  if(!email){authStatus.textContent="メールアドレスを入力してください。";return;}
+  authStatus.textContent="送信中…";
+  const redirectTo=location.origin+location.pathname;
+  const {error}=await supabaseClient.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo}});
+  authStatus.textContent=error?("送信できませんでした: "+error.message):"ログインメールを送りました。メール内のリンクを開いてください。";
+};
+document.getElementById("logoutButton").onclick=async()=>{await supabaseClient.auth.signOut();location.href=location.origin+location.pathname;};
+supabaseClient.auth.onAuthStateChange(()=>{ setTimeout(loadApp,0); });
+loadApp();
 
 function defaultAvatar(name){
   const initial = (name || "?").slice(0,1);
