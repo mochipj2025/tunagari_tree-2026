@@ -187,7 +187,7 @@ button{color:inherit}
 }
 
 .auth-box{position:fixed;z-index:60;right:18px;bottom:18px;width:min(340px,calc(100vw - 36px));padding:14px;border:1px solid var(--line);border-radius:18px;background:var(--panel);backdrop-filter:blur(16px);box-shadow:0 18px 50px rgba(0,0,0,.28);color:var(--ink)}
-.auth-box[hidden]{display:none}.auth-row{display:flex;gap:8px}.auth-row input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.08);color:var(--ink);padding:10px 12px}.auth-title{font-size:13px;font-weight:700;margin:0 0 8px}.auth-note{font-size:11px;line-height:1.55;opacity:.72;margin:8px 0 0}.auth-status{font-size:11px;line-height:1.5;margin-top:8px}.auth-user{position:fixed;z-index:42;right:18px;top:76px;display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(18,31,24,.52);backdrop-filter:blur(10px);color:var(--ink);font-size:11px}.auth-user[hidden]{display:none}.auth-user button{border:0;background:none;color:inherit;cursor:pointer;text-decoration:underline}.owner-only[hidden]{display:none!important}
+.auth-box[hidden]{display:none}.auth-row{display:grid;grid-template-columns:1fr;gap:8px}.auth-row input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.08);color:var(--ink);padding:10px 12px}.auth-title{font-size:13px;font-weight:700;margin:0 0 8px}.auth-note{font-size:11px;line-height:1.55;opacity:.72;margin:8px 0 0}.auth-status{font-size:11px;line-height:1.5;margin-top:8px}.auth-user{position:fixed;z-index:42;right:18px;top:76px;display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(18,31,24,.52);backdrop-filter:blur(10px);color:var(--ink);font-size:11px}.auth-user[hidden]{display:none}.auth-user button{border:0;background:none;color:inherit;cursor:pointer;text-decoration:underline}.owner-only[hidden]{display:none!important}
 @media(max-width:640px){
   .brand{top:16px;left:16px}
   .brand p{display:none}
@@ -215,7 +215,7 @@ button{color:inherit}
  .panel{position:fixed;z-index:90;left:8px;right:8px;top:auto;bottom:max(8px,env(safe-area-inset-bottom));width:auto;max-height:78dvh;overflow:auto;padding:16px;border-radius:20px}
  .profile{position:fixed;z-index:90;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));transform:none;width:auto;max-height:70dvh;overflow:auto}
  .auth-box{position:fixed;z-index:85;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));width:auto}
- .auth-row{display:grid;grid-template-columns:minmax(0,1fr) auto}
+ .auth-row{display:grid;grid-template-columns:1fr}
  .auth-user{position:fixed;z-index:72;top:max(58px,calc(env(safe-area-inset-top) + 50px));right:max(10px,env(safe-area-inset-right))}
  .hint{position:fixed;z-index:65;bottom:max(10px,env(safe-area-inset-bottom));white-space:nowrap}
  .member{touch-action:none}
@@ -341,8 +341,8 @@ button{color:inherit}
   <section class="auth-box" id="authBox" hidden>
     <button class="auth-close" id="authClose" type="button" aria-label="閉じる">×</button>
     <p class="auth-title">編集者ログイン</p>
-    <p class="auth-note">初回招待が完了している編集者のメールアドレスを入力してください。</p>
-    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="登録済みメールアドレス"><button class="action primary" id="sendLogin" type="button">ログインリンクを送る</button></div>
+    <p class="auth-note" id="authNote">登録済みのメールアドレスとパスワードでログインしてください。</p>
+    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="メールアドレス"><input id="authPassword" type="password" autocomplete="current-password" placeholder="パスワード"><button class="action primary" id="passwordLogin" type="button">ログイン</button></div>
     <div class="auth-status" id="authStatus"></div>
   </section>
   <div class="auth-user" id="authUser" hidden><span id="authUserLabel"></span><button id="logoutButton" type="button">ログアウト</button></div>
@@ -775,14 +775,19 @@ const authBox=document.getElementById("authBox");
 const editorLock=document.getElementById("editorLock");
 editorLock.onclick=()=>{authBox.hidden=false;editorLock.setAttribute("aria-expanded","true");setTimeout(()=>document.getElementById("authEmail").focus(),0);};
 document.getElementById("authClose").onclick=()=>{authBox.hidden=true;editorLock.setAttribute("aria-expanded","false");authStatus.textContent="";};
-document.getElementById("sendLogin").onclick=async()=>{
+document.getElementById("passwordLogin").onclick=async()=>{
   const email=document.getElementById("authEmail").value.trim();
-  if(!email){authStatus.textContent="招待済みのメールアドレスを入力してください。";return;}
-  authStatus.textContent="確認中…";
-  const redirectTo=location.href.split("#")[0];
-  const {error}=await supabaseClient.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
-  authStatus.textContent=error?"ロックを解除できませんでした。招待済みのメールアドレスか確認してください。":"ログインリンクを送りました。メール内のリンクを開くと編集モードになります。";
+  const password=document.getElementById("authPassword").value;
+  if(!email || !password){authStatus.textContent="メールアドレスとパスワードを入力してください。";return;}
+  authStatus.textContent="ログイン中…";
+  const {error}=await supabaseClient.auth.signInWithPassword({email,password});
+  if(error){authStatus.textContent="ログインできません。メールアドレスまたはパスワードを確認してください。";return;}
+  authStatus.textContent="編集モードを開いています…";
+  await bootAuthenticatedApp();
+  authBox.hidden=true;
+  editorLock.setAttribute("aria-expanded","false");
 };
+document.getElementById("authPassword").addEventListener("keydown",e=>{if(e.key==="Enter") document.getElementById("passwordLogin").click();});
 document.getElementById("logoutButton").onclick=async()=>{
   await supabaseClient.auth.signOut();
   location.href=location.origin+location.pathname;
