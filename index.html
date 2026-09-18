@@ -340,9 +340,9 @@ button{color:inherit}
   <button class="editor-lock" id="editorLock" type="button" aria-controls="authBox" aria-expanded="false">🔒 編集者はこちら</button>
   <section class="auth-box" id="authBox" hidden>
     <button class="auth-close" id="authClose" type="button" aria-label="閉じる">×</button>
-    <p class="auth-title">編集ロックを解除</p>
-    <p class="auth-note">招待済みのメールアドレスを入力してください。</p>
-    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="招待済みメールアドレス"><button class="action primary" id="sendLogin" type="button">解除リンクを送る</button></div>
+    <p class="auth-title">編集者ログイン</p>
+    <p class="auth-note">初回招待が完了している編集者のメールアドレスを入力してください。</p>
+    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="登録済みメールアドレス"><button class="action primary" id="sendLogin" type="button">ログインリンクを送る</button></div>
     <div class="auth-status" id="authStatus"></div>
   </section>
   <div class="auth-user" id="authUser" hidden><span id="authUserLabel"></span><button id="logoutButton" type="button">ログアウト</button></div>
@@ -356,7 +356,13 @@ button{color:inherit}
 <script>
 const SUPABASE_URL = "https://doontvirtypnzrbpvmcu.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_UzgyTtn3PtsensSY9KxrGw_ZDdKIeon";
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+});
 
 const stage = document.getElementById("stage");
 const memberLayer = document.getElementById("memberLayer");
@@ -518,36 +524,105 @@ async function loadMembers(treeId){
 function randomSlug(){ return "tree-" + crypto.randomUUID().replaceAll("-", "").slice(0,12); }
 
 async function loadApp(){
-  const {data:{session}} = await supabaseClient.auth.getSession();
-  currentUser = session?.user || null;
-  const requestedSlug = new URLSearchParams(location.search).get("tree");
+  const {data:{session}, error:sessionError} = await supabaseClient.auth.getSession();
+  if(sessionError) console.error("session read failed", sessionError);
 
-  if(requestedSlug){
-    const {data:tree, error} = await supabaseClient.from("trees").select("*").eq("slug", requestedSlug).maybeSingle();
-    if(error || !tree){ clearMembers(); setOwnerUI(false); return; }
-    currentTree = tree;
-    setOwnerUI(!!currentUser && tree.owner_id === currentUser.id);
-    await loadMembers(tree.id);
-  } else if(currentUser){
-    let {data:tree, error} = await supabaseClient.from("trees").select("*").eq("owner_id", currentUser.id).order("created_at", {ascending:true}).limit(1).maybeSingle();
-    if(error){ console.error(error); return; }
-    if(!tree){
-      const created = await supabaseClient.from("trees").insert({title:"つながりの木", slug:randomSlug(), is_public:true}).select().single();
-      if(created.error){ console.error(created.error); return; }
-      tree = created.data;
+  currentUser = session?.user || null;
+  currentTree = null;
+  clearMembers();
+
+  if(currentUser){
+    /* 1 user = 1 tree.
+       Always resolve the editing tree from the authenticated user's owner_id.
+       Do not let a stale ?tree= slug decide whether the editor is the owner. */
+    let {data:tree, error} = await supabaseClient
+      .from("trees")
+      .select("*")
+      .eq("owner_id", currentUser.id)
+      .maybeSingle();
+
+    if(error){
+      console.error("owner tree load failed", error);
+      setOwnerUI(false);
+    } else {
+      if(!tree){
+        /* The DB has a UNIQUE index on owner_id, so duplicate trees cannot be created. */
+        const created = await supabaseClient
+          .from("trees")
+          .insert({
+            owner_id: currentUser.id,
+            title:"つながりの木",
+            slug:randomSlug(),
+            is_public:true
+          })
+          .select()
+          .single();
+
+        if(created.error){
+          /* A concurrent tab may have created the tree first.
+             Re-read the single owner tree instead of creating another one. */
+          const retry = await supabaseClient
+            .from("trees")
+            .select("*")
+            .eq("owner_id", currentUser.id)
+            .maybeSingle();
+
+          if(retry.error || !retry.data){
+            console.error("owner tree create/load failed", created.error, retry.error);
+            setOwnerUI(false);
+          } else {
+            tree = retry.data;
+          }
+        } else {
+          tree = created.data;
+        }
+      }
+
+      if(tree){
+        currentTree = tree;
+        setOwnerUI(true);
+        await loadMembers(tree.id);
+
+        /* Keep a stable public share URL without letting it control ownership. */
+        const u = new URL(location.href);
+        if(u.searchParams.get("tree") !== tree.slug){
+          u.searchParams.set("tree", tree.slug);
+          history.replaceState({}, "", u.pathname + u.search + u.hash);
+        }
+      }
     }
-    currentTree = tree;
-    setOwnerUI(true);
-    await loadMembers(tree.id);
   } else {
-    currentTree = null; clearMembers(); setOwnerUI(false);
+    /* Visitors may only open a public tree by its share slug.
+       RLS remains the security boundary for private trees. */
+    const requestedSlug = new URLSearchParams(location.search).get("tree");
+    if(requestedSlug){
+      const {data:tree, error} = await supabaseClient
+        .from("trees")
+        .select("*")
+        .eq("slug", requestedSlug)
+        .maybeSingle();
+
+      if(!error && tree){
+        currentTree = tree;
+        setOwnerUI(false);
+        await loadMembers(tree.id);
+      } else {
+        setOwnerUI(false);
+      }
+    } else {
+      setOwnerUI(false);
+    }
   }
 
-  document.getElementById("authBox").hidden = true;
-  document.getElementById("editorLock").hidden = !!currentUser;
-  document.getElementById("editorLock").setAttribute("aria-expanded","false");
+  const authBoxEl = document.getElementById("authBox");
+  const editorLockEl = document.getElementById("editorLock");
+  if(authBoxEl) authBoxEl.hidden = true;
+  if(editorLockEl){
+    editorLockEl.hidden = !!currentUser;
+    editorLockEl.setAttribute("aria-expanded","false");
+  }
   document.getElementById("authUser").hidden = !currentUser;
-  document.getElementById("authUserLabel").textContent = currentUser ? "編集モード" : "";
+  document.getElementById("authUserLabel").textContent = currentUser ? (currentTree && isOwner ? "編集モード" : "認証済み") : "";
 }
 
 async function uploadIcon(file){
@@ -704,12 +779,51 @@ document.getElementById("sendLogin").onclick=async()=>{
   const email=document.getElementById("authEmail").value.trim();
   if(!email){authStatus.textContent="招待済みのメールアドレスを入力してください。";return;}
   authStatus.textContent="確認中…";
-  const redirectTo=location.origin+location.pathname;
+  const redirectTo=location.href.split("#")[0];
   const {error}=await supabaseClient.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
-  authStatus.textContent=error?"ロックを解除できませんでした。招待済みのメールアドレスか確認してください。":"解除リンクを送りました。メール内のリンクを開いたあと、この画面に戻れば自動で編集モードになります。";
+  authStatus.textContent=error?"ロックを解除できませんでした。招待済みのメールアドレスか確認してください。":"ログインリンクを送りました。メール内のリンクを開くと編集モードになります。";
 };
-document.getElementById("logoutButton").onclick=async()=>{await supabaseClient.auth.signOut();location.href=location.origin+location.pathname;};
-supabaseClient.auth.onAuthStateChange(()=>{ setTimeout(loadApp,0); });
+document.getElementById("logoutButton").onclick=async()=>{
+  await supabaseClient.auth.signOut();
+  location.href=location.origin+location.pathname;
+};
+
+let authBooting = false;
+async function bootAuthenticatedApp(){
+  if(authBooting) return;
+  authBooting = true;
+  try{
+    /* detectSessionInUrl handles Supabase magic-link callbacks.
+       Give the client one tick to persist the callback session before rendering. */
+    await new Promise(resolve => setTimeout(resolve, 80));
+    const {data:{session}, error} = await supabaseClient.auth.getSession();
+    if(error) console.error("session read failed", error);
+    await loadApp();
+
+    /* Remove auth callback fragments/query tokens after the session is safely stored,
+       while preserving the public tree selector. */
+    if(session){
+      const u = new URL(location.href);
+      const hadAuthParams =
+        u.hash.includes("access_token") ||
+        u.searchParams.has("code") ||
+        u.searchParams.has("token_hash");
+      if(hadAuthParams){
+        const tree = u.searchParams.get("tree");
+        const clean = location.origin + location.pathname + (tree ? "?tree=" + encodeURIComponent(tree) : "");
+        history.replaceState({}, "", clean);
+      }
+    }
+  } finally {
+    authBooting = false;
+  }
+}
+
+supabaseClient.auth.onAuthStateChange((event)=>{
+  if(event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "SIGNED_OUT"){
+    setTimeout(()=>bootAuthenticatedApp(),0);
+  }
+});
 
 /* If authentication completed in another tab, refresh this tab immediately
    when the editor returns to it. Supabase persists the session in browser storage. */
@@ -719,7 +833,7 @@ async function refreshEditorSession(){
   const nextUserId = session?.user?.id || null;
   const currentUserId = currentUser?.id || null;
   if(nextUserId !== currentUserId){
-    await loadApp();
+    await bootAuthenticatedApp();
   }
 }
 document.addEventListener("visibilitychange", refreshEditorSession);
@@ -748,7 +862,7 @@ window.addEventListener("orientationchange",()=>{
  setTimeout(()=>centerMobileTree(true),180);
 });
 
-loadApp().then(()=>centerMobileTree());
+bootAuthenticatedApp().then(()=>{ if(typeof centerMobileTree==="function") centerMobileTree(); });
 
 function defaultAvatar(name){
   const initial = (name || "?").slice(0,1);
