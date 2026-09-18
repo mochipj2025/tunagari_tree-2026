@@ -112,6 +112,20 @@ button{color:inherit}
 .volume-wrap{display:flex;align-items:center;gap:7px}
 #volumeSlider{width:105px;accent-color:var(--gold);cursor:pointer}
 #volumeValue{font-size:11px;min-width:32px;text-align:right;opacity:.76}
+
+/* BGMと編集者UIを別段に分離 */
+@media (min-width:761px){
+  .music-controls{
+    top:70px;
+    right:max(18px,env(safe-area-inset-right));
+    max-width:560px;
+    flex-wrap:nowrap;
+  }
+  .auth-user{
+    top:122px !important;
+    right:max(18px,env(safe-area-inset-right));
+  }
+}
 @media(max-width:760px){
   .music-controls{top:68px;right:10px;left:10px;flex-wrap:wrap;justify-content:center}
   .track-select{order:-1;width:100%;max-width:none}
