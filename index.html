@@ -199,6 +199,33 @@ button{color:inherit}
   .scene-layer,#memberLayer{transform:none!important}
   #musicButton.playing svg{animation:none}
 }
+
+/* Mobile explorer: large scrollable tree canvas */
+@media (max-width:760px){
+ html,body{overflow:hidden;overscroll-behavior:none}
+ .app{position:fixed;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-x pan-y;scrollbar-width:none}
+ .app::-webkit-scrollbar{display:none}
+ .stage{position:relative;left:0;top:0;width:1500px;height:844px;transform:none;overflow:hidden}
+ .scene-layer{width:100%;height:100%;object-fit:fill}
+ .brand{position:fixed;top:max(12px,env(safe-area-inset-top));left:max(12px,env(safe-area-inset-left));z-index:70}
+ .brand h1{font-size:22px;letter-spacing:.08em}.brand p{display:none}
+ .toolbar{position:fixed;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));z-index:75}
+ .icon-btn{width:40px;height:40px}
+ .music-controls{position:fixed;top:60px;left:10px;right:10px;z-index:80;max-height:calc(100dvh - 80px)}
+ .panel{position:fixed;z-index:90;left:8px;right:8px;top:auto;bottom:max(8px,env(safe-area-inset-bottom));width:auto;max-height:78dvh;overflow:auto;padding:16px;border-radius:20px}
+ .profile{position:fixed;z-index:90;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));transform:none;width:auto;max-height:70dvh;overflow:auto}
+ .auth-box{position:fixed;z-index:85;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));width:auto}
+ .auth-row{display:grid;grid-template-columns:minmax(0,1fr) auto}
+ .auth-user{position:fixed;z-index:72;top:max(58px,calc(env(safe-area-inset-top) + 50px));right:max(10px,env(safe-area-inset-right))}
+ .hint{position:fixed;z-index:65;bottom:max(10px,env(safe-area-inset-bottom));white-space:nowrap}
+ .member{touch-action:none}
+}
+
+
+.editor-lock{position:fixed;z-index:58;right:max(18px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom));border:1px solid var(--line);border-radius:999px;padding:9px 13px;background:rgba(18,31,24,.48);backdrop-filter:blur(10px);color:rgba(248,244,232,.78);cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:11px}
+.editor-lock[hidden]{display:none}.editor-lock:hover{background:rgba(18,31,24,.72);color:var(--ink)}
+.auth-close{position:absolute;right:10px;top:7px;border:0;background:none;color:inherit;font-size:22px;cursor:pointer}
+@media(max-width:760px){.editor-lock{right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));padding:8px 11px}}
 </style>
 </head>
 <body>
@@ -310,10 +337,12 @@ button{color:inherit}
     </div>
   </article>
 
-  <section class="auth-box" id="authBox">
-    <p class="auth-title">木を編集する</p>
-    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="メールアドレス"><button class="action primary" id="sendLogin" type="button">ログイン</button></div>
-    <p class="auth-note">メールに届くログインリンクを開くと、この端末で自分の木を編集できます。</p>
+  <button class="editor-lock" id="editorLock" type="button" aria-controls="authBox" aria-expanded="false">🔒 編集者はこちら</button>
+  <section class="auth-box" id="authBox" hidden>
+    <button class="auth-close" id="authClose" type="button" aria-label="閉じる">×</button>
+    <p class="auth-title">編集ロックを解除</p>
+    <p class="auth-note">招待済みのメールアドレスを入力してください。</p>
+    <div class="auth-row"><input id="authEmail" type="email" autocomplete="email" placeholder="招待済みメールアドレス"><button class="action primary" id="sendLogin" type="button">解除リンクを送る</button></div>
     <div class="auth-status" id="authStatus"></div>
   </section>
   <div class="auth-user" id="authUser" hidden><span id="authUserLabel"></span><button id="logoutButton" type="button">ログアウト</button></div>
@@ -514,7 +543,9 @@ async function loadApp(){
     currentTree = null; clearMembers(); setOwnerUI(false);
   }
 
-  document.getElementById("authBox").hidden = !!currentUser;
+  document.getElementById("authBox").hidden = true;
+  document.getElementById("editorLock").hidden = !!currentUser;
+  document.getElementById("editorLock").setAttribute("aria-expanded","false");
   document.getElementById("authUser").hidden = !currentUser;
   document.getElementById("authUserLabel").textContent = currentUser ? "編集モード" : "";
 }
@@ -665,17 +696,40 @@ document.getElementById("deleteMember").onclick=async()=>{
 };
 
 const authStatus=document.getElementById("authStatus");
+const authBox=document.getElementById("authBox");
+const editorLock=document.getElementById("editorLock");
+editorLock.onclick=()=>{authBox.hidden=false;editorLock.setAttribute("aria-expanded","true");setTimeout(()=>document.getElementById("authEmail").focus(),0);};
+document.getElementById("authClose").onclick=()=>{authBox.hidden=true;editorLock.setAttribute("aria-expanded","false");authStatus.textContent="";};
 document.getElementById("sendLogin").onclick=async()=>{
   const email=document.getElementById("authEmail").value.trim();
-  if(!email){authStatus.textContent="メールアドレスを入力してください。";return;}
-  authStatus.textContent="送信中…";
+  if(!email){authStatus.textContent="招待済みのメールアドレスを入力してください。";return;}
+  authStatus.textContent="確認中…";
   const redirectTo=location.origin+location.pathname;
-  const {error}=await supabaseClient.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo}});
-  authStatus.textContent=error?("送信できませんでした: "+error.message):"ログインメールを送りました。メール内のリンクを開いてください。";
+  const {error}=await supabaseClient.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
+  authStatus.textContent=error?"ロックを解除できませんでした。招待済みのメールアドレスか確認してください。":"解除リンクを送りました。メール内のリンクを開いてください。";
 };
 document.getElementById("logoutButton").onclick=async()=>{await supabaseClient.auth.signOut();location.href=location.origin+location.pathname;};
 supabaseClient.auth.onAuthStateChange(()=>{ setTimeout(loadApp,0); });
-loadApp();
+
+function isMobileExplorer(){return window.matchMedia("(max-width:760px)").matches;}
+function centerMobileTree(force=false){
+ if(!isMobileExplorer()) return;
+ const app=document.getElementById("app"), s=document.getElementById("stage");
+ if(!app||!s) return;
+ const key="treeMobileViewportInitialized";
+ if(!force&&sessionStorage.getItem(key)) return;
+ requestAnimationFrame(()=>{
+   app.scrollLeft=Math.max(0,s.scrollWidth-app.clientWidth)*.5;
+   app.scrollTop=Math.max(0,s.scrollHeight-app.clientHeight)*.46;
+   sessionStorage.setItem(key,"1");
+ });
+}
+window.addEventListener("orientationchange",()=>{
+ sessionStorage.removeItem("treeMobileViewportInitialized");
+ setTimeout(()=>centerMobileTree(true),180);
+});
+
+loadApp().then(()=>centerMobileTree());
 
 function defaultAvatar(name){
   const initial = (name || "?").slice(0,1);
@@ -684,7 +738,7 @@ function defaultAvatar(name){
 }
 
 /* Tiny parallax: translate only; never scale scene assets. */
-if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+if (!matchMedia("(prefers-reduced-motion: reduce)").matches && !matchMedia("(max-width: 760px)").matches) {
   window.addEventListener("pointermove", e => {
     const dx = (e.clientX / innerWidth - .5);
     const dy = (e.clientY / innerHeight - .5);
