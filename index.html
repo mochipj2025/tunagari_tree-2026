@@ -706,10 +706,29 @@ document.getElementById("sendLogin").onclick=async()=>{
   authStatus.textContent="確認中…";
   const redirectTo=location.origin+location.pathname;
   const {error}=await supabaseClient.auth.signInWithOtp({email,options:{emailRedirectTo:redirectTo,shouldCreateUser:false}});
-  authStatus.textContent=error?"ロックを解除できませんでした。招待済みのメールアドレスか確認してください。":"解除リンクを送りました。メール内のリンクを開いてください。";
+  authStatus.textContent=error?"ロックを解除できませんでした。招待済みのメールアドレスか確認してください。":"解除リンクを送りました。メール内のリンクを開いたあと、この画面に戻れば自動で編集モードになります。";
 };
 document.getElementById("logoutButton").onclick=async()=>{await supabaseClient.auth.signOut();location.href=location.origin+location.pathname;};
 supabaseClient.auth.onAuthStateChange(()=>{ setTimeout(loadApp,0); });
+
+/* If authentication completed in another tab, refresh this tab immediately
+   when the editor returns to it. Supabase persists the session in browser storage. */
+async function refreshEditorSession(){
+  if(document.visibilityState !== "visible") return;
+  const {data:{session}} = await supabaseClient.auth.getSession();
+  const nextUserId = session?.user?.id || null;
+  const currentUserId = currentUser?.id || null;
+  if(nextUserId !== currentUserId){
+    await loadApp();
+  }
+}
+document.addEventListener("visibilitychange", refreshEditorSession);
+window.addEventListener("focus", refreshEditorSession);
+
+/* Supabase auth storage changes can also arrive from another same-origin tab. */
+window.addEventListener("storage", e => {
+  if(e.key && e.key.includes("-auth-token")) refreshEditorSession();
+});
 
 function isMobileExplorer(){return window.matchMedia("(max-width:760px)").matches;}
 function centerMobileTree(force=false){
